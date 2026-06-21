@@ -174,6 +174,12 @@ function setupControls() {
 	replaceCtl("f-to", makeDatePicker(today))
 	replaceCtl("mv-date", makeDatePicker(today))
 	replaceCtl("plan-date", makeDatePicker(today))
+	const back = new Date()
+	back.setMonth(back.getMonth() - 6)
+	const fwd = new Date()
+	fwd.setMonth(fwd.getMonth() + 6)
+	replaceCtl("jr-from", makeDatePicker(fmt(back)))
+	replaceCtl("jr-to", makeDatePicker(fmt(fwd)))
 }
 setupControls()
 
@@ -202,6 +208,9 @@ $("#jr-q").addEventListener("input", debounce(renderJournal, 300))
 $("#jr-hotel").addEventListener("change", renderJournal)
 $("#plan-hotel").addEventListener("change", renderPlan)
 $("#plan-date").addEventListener("change", renderPlan)
+$("#jr-from").addEventListener("change", renderJournal)
+$("#jr-to").addEventListener("change", renderJournal)
+$("#jr-print").addEventListener("click", printRegistrationBook)
 
 function debounce(fn, ms) {
 	let t
@@ -256,21 +265,28 @@ async function renderMovements() {
 	body.append(block("Заезды", data.arrivals), block("Выезды", data.departures))
 }
 
+let journalRows = []
 async function renderJournal() {
 	const q = $("#jr-q").value.trim()
 	const hotel = $("#jr-hotel").value
+	const from = $("#jr-from").value
+	const to = $("#jr-to").value
 	const params = new URLSearchParams()
 	if (q) params.set("q", q)
 	if (hotel) params.set("hotel_id", hotel)
-	const rows = await apiJson(`/journal?${params}`)
+	if (from && to) {
+		params.set("from", from)
+		params.set("to", to)
+	}
+	journalRows = await apiJson(`/journal?${params}`)
 	const body = $("#journal-body")
 	body.innerHTML = ""
-	if (!rows.length) {
+	if (!journalRows.length) {
 		body.append(el("div", { className: "empty-note" }, "Размещений не найдено."))
 		return
 	}
 	body.append(
-		dataTable(["Гость", "Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус"], rows, (r) =>
+		dataTable(["Гость", "Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус"], journalRows, (r) =>
 			el(
 				"tr",
 				{},
@@ -284,6 +300,46 @@ async function renderJournal() {
 			),
 		),
 	)
+}
+
+function printRegistrationBook() {
+	const hotelName = S.hotels.find((h) => String(h.id) === String($("#jr-hotel").value))?.name || "Все гостиницы"
+	const meta = [`Гостиница: ${hotelName}`, `Период: ${$("#jr-from").value} – ${$("#jr-to").value}`, `Записей: ${journalRows.length}`]
+	const rows = journalRows.map((r, i) => [i + 1, r.resident_name || "—", r.hotel_name, r.room_number, r.bed_label, r.date_from, r.date_to, r.status_name])
+	openPrint("Книга регистрации проживающих", meta, ["№", "ФИО", "Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус"], rows)
+}
+
+function openPrint(title, metaLines, columns, rows) {
+	const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))
+	const head = `<tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`
+	const body = rows.length
+		? rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")
+		: `<tr><td colspan="${columns.length}" style="text-align:center;color:#666">Нет данных</td></tr>`
+	const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>
+	body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:24px}
+	h1{font-size:18px;margin:0 0 6px}
+	.meta{color:#444;font-size:12px;margin-bottom:14px}
+	.meta span{margin-right:14px}
+	table{border-collapse:collapse;width:100%;font-size:12px}
+	th,td{border:1px solid #999;padding:5px 8px;text-align:left;vertical-align:top}
+	th{background:#eee}
+	.org{font-size:13px;font-weight:bold;margin-bottom:2px}
+	.sign{margin-top:28px;font-size:12px}
+	.noprint{margin-top:18px}
+	@media print{.noprint{display:none}}
+</style></head><body>
+	<div class="org">АО «Хиагда»</div>
+	<h1>${esc(title)}</h1>
+	<div class="meta">${metaLines.map((m) => `<span>${esc(m)}</span>`).join("")}</div>
+	<table><thead>${head}</thead><tbody>${body}</tbody></table>
+	<div class="sign">Ответственный: ______________________ / ____________________ &nbsp;&nbsp;&nbsp; Дата: ______________</div>
+	<button class="noprint" onclick="window.print()" style="padding:8px 16px;font-size:14px;cursor:pointer">Печать / Сохранить в PDF</button>
+</body></html>`
+	const w = window.open("", "_blank")
+	if (!w) return toast("Разрешите всплывающие окна для печати")
+	w.document.write(html)
+	w.document.close()
 }
 
 async function renderPlan() {
@@ -636,7 +692,14 @@ async function guestCard(id) {
 		r.full_name,
 		[info, history],
 		[
-			Object.assign(el("button", { className: "btn", textContent: "⭳ Отчёт в Excel" }), { onclick: () => download(`/report/resident/${r.id}`) }),
+			Object.assign(el("button", { className: "btn", textContent: "⭳ Excel" }), { onclick: () => download(`/report/resident/${r.id}`) }),
+			Object.assign(el("button", { className: "btn", textContent: "🖨 Печать / PDF" }), {
+				onclick: () => {
+					const meta = [`Таб. №: ${r.tab_number || "—"}`, `Организация: ${r.company || "—"}`, `Должность: ${r.position || "—"}`, `Телефон: ${r.phone || "—"}`]
+					const rows = data.stays.map((s) => [s.hotel_name, s.room_number, s.bed_label, s.date_from, s.date_to, s.status_name])
+					openPrint(`Карточка проживающего: ${r.full_name}`, meta, ["Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус"], rows)
+				},
+			}),
 			el("button", { className: "btn btn-primary", textContent: "Закрыть", onclick: () => close() }),
 		],
 	)

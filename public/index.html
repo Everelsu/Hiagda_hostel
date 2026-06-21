@@ -148,12 +148,17 @@
 					<div class="page-head">
 						<div>
 							<h1>Журнал размещений</h1>
-							<p class="sub">Все брони и проживания, включая прошедшие</p>
+							<p class="sub">Все брони и проживания · печать книги регистрации</p>
 						</div>
+						<button class="btn" id="jr-print"><span class="ic" data-icon="book"></span> Книга регистрации (печать/PDF)</button>
 					</div>
 					<div class="toolbar">
 						<div class="group" style="flex:1"><label>Поиск (ФИО или номер)</label><input id="jr-q" placeholder="Поиск…" /></div>
 						<div class="group"><label>Гостиница</label><select id="jr-hotel"><option value="">Все</option></select></div>
+						<div class="group dates">
+							<div><label>Период с</label><input type="date" id="jr-from" /></div>
+							<div><label>по</label><input type="date" id="jr-to" /></div>
+						</div>
 					</div>
 					<div class="view-body" id="journal-body"></div>
 				</section>
