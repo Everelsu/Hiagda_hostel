@@ -144,10 +144,13 @@ async function boot() {
 	S.classes = await apiJson("/classes")
 	S.statuses = await apiJson("/statuses")
 
-	$("#f-hotel").setItems(S.hotels.map((h) => ({ value: h.id, label: h.name })))
+	const hotelItems = S.hotels.map((h) => ({ value: h.id, label: h.name }))
+	$("#f-hotel").setItems(hotelItems)
+	$("#plan-hotel").setItems(hotelItems)
 	$("#f-class").setItems([{ value: "", label: "Все" }, ...S.classes.map((c) => ({ value: c.id, label: c.name }))])
-	$("#jr-hotel").setItems([{ value: "", label: "Все" }, ...S.hotels.map((h) => ({ value: h.id, label: h.name }))])
+	$("#jr-hotel").setItems([{ value: "", label: "Все" }, ...hotelItems])
 	$("#mv-date").value = fmt(new Date())
+	$("#plan-date").value = fmt(new Date())
 
 	renderLegend()
 	refreshGrid()
@@ -166,9 +169,11 @@ function setupControls() {
 	replaceCtl("f-hotel", makeSelect([], null))
 	replaceCtl("f-class", makeSelect([{ value: "", label: "Все" }], ""))
 	replaceCtl("jr-hotel", makeSelect([{ value: "", label: "Все" }], ""))
+	replaceCtl("plan-hotel", makeSelect([], null))
 	replaceCtl("f-from", makeDatePicker(today))
 	replaceCtl("f-to", makeDatePicker(today))
 	replaceCtl("mv-date", makeDatePicker(today))
+	replaceCtl("plan-date", makeDatePicker(today))
 }
 setupControls()
 
@@ -178,6 +183,7 @@ setupControls()
 
 /* ---------- переключение экранов ---------- */
 const VIEW_RENDER = {
+	plan: renderPlan,
 	movements: renderMovements,
 	journal: renderJournal,
 	summary: renderSummary,
@@ -194,6 +200,8 @@ document.querySelectorAll(".nav-item[data-view]").forEach((b) => {
 $("#mv-date").addEventListener("change", renderMovements)
 $("#jr-q").addEventListener("input", debounce(renderJournal, 300))
 $("#jr-hotel").addEventListener("change", renderJournal)
+$("#plan-hotel").addEventListener("change", renderPlan)
+$("#plan-date").addEventListener("change", renderPlan)
 
 function debounce(fn, ms) {
 	let t
@@ -275,6 +283,73 @@ async function renderJournal() {
 				statusCell(r.status_name, r.status_color),
 			),
 		),
+	)
+}
+
+async function renderPlan() {
+	const hotel = $("#plan-hotel").value
+	const date = $("#plan-date").value || fmt(new Date())
+	const body = $("#plan-body")
+	if (!hotel) {
+		body.innerHTML = ""
+		body.append(el("div", { className: "empty-note" }, "Выберите гостиницу."))
+		return
+	}
+	const { rooms } = await apiJson(`/plan?hotel_id=${hotel}&date=${date}`)
+	body.innerHTML = ""
+	if (!rooms.length) {
+		body.append(el("div", { className: "empty-note" }, "В гостинице нет номеров."))
+		return
+	}
+	const floors = {}
+	for (const r of rooms) (floors[r.floor ?? "—"] ||= []).push(r)
+	for (const floor of Object.keys(floors)) {
+		const wrap = el("div", { className: "plan-floor" })
+		wrap.append(el("div", { className: "section-title" }, `Этаж ${floor}`, el("span", { className: "count" }, `${floors[floor].length} ном.`)))
+		const grid = el("div", { className: "plan-grid" })
+		for (const room of floors[floor]) {
+			const cls = room.occupied === 0 ? "free" : room.occupied >= room.capacity ? "full" : "part"
+			const tile = el("div", { className: `room-tile ${cls}` })
+			tile.title = room.beds
+				.map((b) => `${b.label}: ${b.placement ? `${b.placement.resident_name || b.placement.status_name}` : "свободно"}`)
+				.join("\n")
+			tile.append(el("div", { className: "rt-num" }, `№ ${room.number}`))
+			tile.append(el("div", { className: "rt-cls" }, `${room.class_name || "—"} · ${room.occupied}/${room.capacity}`))
+			const beds = el("div", { className: "rt-beds" })
+			room.beds.forEach((b) => beds.append(el("span", { className: "rt-bed", style: b.placement ? `background:${b.placement.status_color}` : "" })))
+			tile.append(beds)
+			tile.onclick = () => roomPlanModal(room, date)
+			grid.append(tile)
+		}
+		wrap.append(grid)
+		body.append(wrap)
+	}
+}
+
+function roomPlanModal(room, date) {
+	const listWrap = el("div", { className: "list" })
+	room.beds.forEach((b) => {
+		const p = b.placement
+		const info = p
+			? el("span", { className: "grow" }, el("span", { className: "swatch", style: `background:${p.status_color};margin-right:6px` }), `${b.label} — ${p.resident_name || p.status_name} (${p.date_from} – ${p.date_to})`)
+			: el("span", { className: "grow muted" }, `${b.label} — свободно`)
+		const li = el("div", { className: "li" }, info)
+		if (can("editor")) {
+			const act = el("button", { className: "btn btn-transparent btn-sm icon-only", title: p ? "Изменить" : "Заселить" }, iconEl(p ? "pencil" : "plus"))
+			act.onclick = () => {
+				close()
+				placementModal(b, p, date, () => {
+					apiJson(`/plan?hotel_id=${room.hotel_id}&date=${date}`).then(() => renderPlan())
+				})
+			}
+			li.append(act)
+		}
+		listWrap.append(li)
+	})
+	const close = modal(
+		`Номер № ${room.number} · ${room.class_name || "—"}`,
+		[el("p", { className: "muted", style: "margin:0" }, `Занято ${room.occupied} из ${room.capacity} на ${date}`), listWrap],
+		[el("button", { className: "btn btn-primary", textContent: "Закрыть", onclick: () => close() })],
 	)
 }
 
@@ -480,7 +555,8 @@ function modal(title, bodyNodes, footNodes) {
 const field = (labelText, input) => el("div", {}, el("label", {}, labelText), input)
 
 /* ---------- placement modal ---------- */
-function placementModal(bed, existing, date) {
+function placementModal(bed, existing, date, onSaved) {
+	const done = onSaved || refreshGrid
 	const resInput = el("input", { placeholder: "Начните вводить ФИО", value: existing?.resident_name || "" })
 	let residentId = existing?.resident_id || null
 	const suggest = el("div", { className: "list" })
@@ -541,7 +617,7 @@ function placementModal(bed, existing, date) {
 						onclick: async () => {
 							await api(`/placements/${existing.id}`, { method: "DELETE" })
 							close()
-							refreshGrid()
+							done()
 						},
 					})
 				: el("span"),
@@ -560,7 +636,7 @@ function placementModal(bed, existing, date) {
 						if (existing) await api(`/placements/${existing.id}`, { method: "PUT", body: JSON.stringify(payload) })
 						else await api("/placements", { method: "POST", body: JSON.stringify(payload) })
 						close()
-						refreshGrid()
+						done()
 					} catch (e) {
 						toast(e.message)
 					}

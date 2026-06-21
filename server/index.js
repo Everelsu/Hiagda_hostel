@@ -173,6 +173,32 @@ api.get("/summary", (req, res) => {
 	res.json(result)
 })
 
+api.get("/plan", (req, res) => {
+	if (!req.query.hotel_id) return res.json({ date: null, rooms: [] })
+	const date = req.query.date || new Date().toISOString().slice(0, 10)
+	const rooms = db
+		.prepare(
+			`SELECT r.*, c.name AS class_name FROM rooms r
+			 LEFT JOIN room_classes c ON c.id = r.class_id
+			 WHERE r.hotel_id = ? ORDER BY r.floor, r.number`,
+		)
+		.all(req.query.hotel_id)
+	const bedStmt = db.prepare("SELECT * FROM beds WHERE room_id = ? ORDER BY id")
+	const plStmt = db.prepare(
+		`SELECT p.id, p.resident_id, p.date_from, p.date_to, p.comment,
+			r.full_name AS resident_name, s.name AS status_name, s.color AS status_color
+		 FROM placements p
+		 JOIN statuses s ON s.id = p.status_id
+		 LEFT JOIN residents r ON r.id = p.resident_id
+		 WHERE p.bed_id = ? AND p.date_from <= ? AND p.date_to >= ? LIMIT 1`,
+	)
+	for (const room of rooms) {
+		room.beds = bedStmt.all(room.id).map((b) => ({ ...b, placement: plStmt.get(b.id, date, date) || null }))
+		room.occupied = room.beds.filter((b) => b.placement).length
+	}
+	res.json({ date, rooms })
+})
+
 api.get("/users", requireRole("admin"), (_req, res) => {
 	res.json(db.prepare("SELECT id, username, full_name, role, created_at FROM users ORDER BY username").all())
 })

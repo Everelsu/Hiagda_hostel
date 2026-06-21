@@ -38,6 +38,7 @@
 				<nav class="nav-section">
 					<div class="heading">Основное</div>
 					<button class="nav-item active" data-view="rack"><span class="ico" data-icon="calendar"></span> Шахматка</button>
+					<button class="nav-item" data-view="plan"><span class="ico" data-icon="layout"></span> План размещения</button>
 					<button class="nav-item" data-view="movements"><span class="ico" data-icon="key"></span> Заезды / выезды</button>
 					<button class="nav-item" data-view="journal"><span class="ico" data-icon="book"></span> Журнал размещений</button>
 					<button class="nav-item" data-view="summary"><span class="ico" data-icon="info"></span> Сводка</button>
@@ -106,6 +107,25 @@
 
 					<div class="legend" id="legend"></div>
 					<div class="grid-wrap"><div id="grid"></div></div>
+				</section>
+
+				<section class="view hidden" id="view-plan">
+					<div class="page-head">
+						<div>
+							<h1>План размещения</h1>
+							<p class="sub">Номера по этажам · цвет = занятость · наведите для деталей</p>
+						</div>
+						<div class="group"><label>Дата</label><input type="date" id="plan-date" /></div>
+					</div>
+					<div class="toolbar">
+						<div class="group"><label>Гостиница</label><select id="plan-hotel"></select></div>
+					</div>
+					<div class="legend">
+						<div class="item"><span class="swatch" style="background:var(--color-gray)"></span> Свободно</div>
+						<div class="item"><span class="swatch" style="background:var(--color-green)"></span> Частично занят</div>
+						<div class="item"><span class="swatch" style="background:var(--color-red)"></span> Занят полностью</div>
+					</div>
+					<div class="view-body" id="plan-body"></div>
 				</section>
 
 				<section class="view hidden" id="view-movements">

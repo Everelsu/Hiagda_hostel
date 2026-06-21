@@ -835,6 +835,62 @@ label {
 	border-radius: var(--radius-lg);
 }
 
+/* План размещения (плитки номеров) */
+.plan-floor {
+	margin-bottom: var(--gap-lg);
+}
+.plan-floor .section-title {
+	margin-bottom: var(--gap-md);
+}
+.plan-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+	gap: var(--gap-md);
+}
+.room-tile {
+	background: var(--surface-3);
+	border: 1px solid var(--surface-4);
+	border-left: 4px solid var(--color-gray);
+	border-radius: var(--radius-md);
+	padding: var(--gap-md);
+	cursor: pointer;
+	transition: transform 0.05s, box-shadow 0.15s;
+}
+.room-tile:hover {
+	box-shadow: var(--shadow-floating);
+	transform: translateY(-1px);
+}
+.room-tile.full {
+	border-left-color: var(--color-red);
+}
+.room-tile.part {
+	border-left-color: var(--color-green);
+}
+.room-tile.free {
+	border-left-color: var(--color-gray);
+}
+.room-tile .rt-num {
+	font-weight: var(--font-weight-bold);
+	color: var(--color-contrast);
+}
+.room-tile .rt-cls {
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+	margin: 2px 0 var(--gap-sm);
+}
+.room-tile .rt-beds {
+	display: flex;
+	gap: 3px;
+	flex-wrap: wrap;
+}
+.rt-bed {
+	width: 14px;
+	height: 14px;
+	border-radius: var(--radius-xs);
+	background: var(--color-button-bg);
+	border: 1px solid var(--surface-5);
+}
+
 /* Карточки сводки по гостиницам */
 .summary-grid {
 	display: grid;
