@@ -16,6 +16,7 @@ const el = (tag, props = {}, ...kids) => {
 }
 const ROLE_RANK = { viewer: 1, editor: 2, admin: 3 }
 const can = (role) => S.user && ROLE_RANK[S.user.role] >= ROLE_RANK[role]
+const isFreeStatus = (n) => /свобод/i.test(n || "")
 
 async function api(pathName, opts = {}) {
 	const res = await fetch(`/api${pathName}`, {
@@ -660,6 +661,7 @@ function drawGrid(from, to) {
 			})
 			const lastStr = dayStrs[dayStrs.length - 1]
 			for (const p of list) {
+				if (isFreeStatus(p.status_name)) continue
 				if (p.date_to < dayStrs[0] || p.date_from > lastStr) continue
 				const s = p.date_from <= dayStrs[0] ? 0 : dayStrs.indexOf(p.date_from)
 				const e = p.date_to >= lastStr ? dayStrs.length - 1 : dayStrs.indexOf(p.date_to)

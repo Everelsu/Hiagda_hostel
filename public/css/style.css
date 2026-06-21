@@ -237,7 +237,7 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 .btn.btn-primary {
 	--_text-color: var(--color-accent-contrast);
-	--_background-color: var(--color-brand);
+	--_background-color: var(--color-green);
 	font-weight: var(--font-weight-bold);
 }
 .btn.btn-secondary {
@@ -1203,4 +1203,80 @@ td.day.drag-sel {
 	border-radius: var(--radius-md);
 	box-shadow: var(--shadow-floating);
 	z-index: 100;
+}
+
+/* ============================================================
+   Полировка — вайб Modrinth (плавность, ховеры, акценты)
+   ============================================================ */
+.nav-item,
+.list .li,
+.sel-btn,
+.dp-btn,
+.btn,
+.stat-card,
+.summary-card,
+.panel,
+.room-tile,
+.gs-item,
+input,
+select,
+textarea {
+	transition:
+		background-color 0.15s ease,
+		border-color 0.15s ease,
+		box-shadow 0.15s ease,
+		color 0.15s ease,
+		transform 0.07s ease,
+		filter 0.15s ease;
+}
+
+/* Зелёный логотип-точка, как у Modrinth */
+.brand-mark .dot {
+	background: var(--color-green);
+	box-shadow: 0 0 14px rgba(27, 217, 106, 0.45);
+}
+
+/* KPI и карточки слегка «оживают» */
+.stat-card:hover {
+	transform: translateY(-1px);
+	border-color: var(--surface-5);
+}
+.summary-card:hover,
+.panel:hover {
+	border-color: var(--surface-5);
+}
+
+/* Активный пункт меню — мягкая фиолетовая подсветка + акцентная полоска */
+.nav-item.active {
+	box-shadow: inset 3px 0 0 var(--color-brand);
+}
+
+/* Логин — чуть просторнее и премиальнее */
+.login-card {
+	width: 380px;
+	padding: 2.5rem;
+}
+.login-card h1 {
+	font-size: var(--font-size-xl);
+}
+
+/* Заголовки страниц — крупнее, как на Modrinth */
+.page-head h1 {
+	font-size: var(--font-size-xl);
+	letter-spacing: -0.01em;
+}
+
+/* Тосты — мягче появляются */
+.toast {
+	animation: toast-in 0.18s ease;
+}
+@keyframes toast-in {
+	from {
+		opacity: 0;
+		transform: translate(-50%, 8px);
+	}
+	to {
+		opacity: 1;
+		transform: translate(-50%, 0);
+	}
 }
