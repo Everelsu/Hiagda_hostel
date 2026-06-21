@@ -173,6 +173,50 @@ api.get("/summary", (req, res) => {
 	res.json(result)
 })
 
+api.get("/dashboard", (req, res) => {
+	const today = new Date().toISOString().slice(0, 10)
+	const hotels = db.prepare("SELECT id, name FROM hotels ORDER BY name").all()
+	let tRooms = 0
+	let tBeds = 0
+	let tOcc = 0
+	const hotelStats = hotels.map((h) => {
+		const beds = db.prepare("SELECT COUNT(*) c FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.hotel_id = ?").get(h.id).c
+		const occupied = db
+			.prepare(
+				`SELECT COUNT(DISTINCT b.id) c FROM beds b JOIN rooms r ON r.id = b.room_id
+				 JOIN placements p ON p.bed_id = b.id WHERE r.hotel_id = ? AND p.date_from <= ? AND p.date_to >= ?`,
+			)
+			.get(h.id, today, today).c
+		const rooms = db.prepare("SELECT COUNT(*) c FROM rooms WHERE hotel_id = ?").get(h.id).c
+		tRooms += rooms
+		tBeds += beds
+		tOcc += occupied
+		return { ...h, rooms, beds, occupied, free: beds - occupied, load: beds ? Math.round((occupied / beds) * 100) : 0 }
+	})
+	const moveBase = `
+		SELECT p.date_from, p.date_to, r.full_name AS resident_name,
+			rm.number AS room_number, h.name AS hotel_name, b.label AS bed_label
+		FROM placements p
+		JOIN beds b ON b.id = p.bed_id
+		JOIN rooms rm ON rm.id = b.room_id
+		JOIN hotels h ON h.id = rm.hotel_id
+		LEFT JOIN residents r ON r.id = p.resident_id`
+	res.json({
+		date: today,
+		totals: {
+			hotels: hotels.length,
+			rooms: tRooms,
+			beds: tBeds,
+			occupied: tOcc,
+			free: tBeds - tOcc,
+			load: tBeds ? Math.round((tOcc / tBeds) * 100) : 0,
+		},
+		hotels: hotelStats,
+		arrivals: db.prepare(`${moveBase} WHERE p.date_from = ? ORDER BY h.name, rm.number LIMIT 12`).all(today),
+		departures: db.prepare(`${moveBase} WHERE p.date_to = ? ORDER BY h.name, rm.number LIMIT 12`).all(today),
+	})
+})
+
 api.get("/plan", (req, res) => {
 	if (!req.query.hotel_id) return res.json({ date: null, rooms: [] })
 	const date = req.query.date || new Date().toISOString().slice(0, 10)

@@ -154,7 +154,7 @@ async function boot() {
 
 	renderLegend()
 	refreshGrid()
-	showView("rack")
+	showView("dashboard")
 }
 
 /* ---------- замена нативных контролов на кастомные ---------- */
@@ -189,6 +189,7 @@ setupControls()
 
 /* ---------- переключение экранов ---------- */
 const VIEW_RENDER = {
+	dashboard: renderDashboard,
 	plan: renderPlan,
 	movements: renderMovements,
 	journal: renderJournal,
@@ -340,6 +341,59 @@ function openPrint(title, metaLines, columns, rows) {
 	if (!w) return toast("Разрешите всплывающие окна для печати")
 	w.document.write(html)
 	w.document.close()
+}
+
+async function renderDashboard() {
+	const d = await apiJson("/dashboard")
+	const body = $("#dashboard-body")
+	body.innerHTML = ""
+
+	const t = d.totals
+	const stats = el("div", { className: "stats", style: "padding:0" })
+	;[["Гостиниц", t.hotels], ["Номеров", t.rooms], ["Мест всего", t.beds], ["Занято сегодня", t.occupied], ["Свободно", t.free], ["Загрузка", `${t.load}%`]].forEach(([l, v]) =>
+		stats.append(el("div", { className: "stat-card" }, el("div", { className: "value" }, String(v)), el("p", { className: "label" }, l))),
+	)
+	body.append(stats)
+
+	const actions = el("div", { className: "quick-actions" })
+	const act = (label, icon, fn) => {
+		const b = el("button", { className: "btn" }, iconEl(icon), label)
+		b.onclick = fn
+		actions.append(b)
+	}
+	act("Шахматка", "calendar", () => showView("rack"))
+	act("План размещения", "layout", () => showView("plan"))
+	if (can("editor")) act("Добавить номер", "key", () => roomModal(null))
+	if (can("editor")) act("Импорт из Excel", "upload", () => $("#btn-import").click())
+	body.append(actions)
+
+	const cols = el("div", { className: "dash-cols" })
+
+	const todayPanel = el("div", { className: "panel" })
+	const miniList = (title, rows) => {
+		const wrap = el("div", { style: "margin-bottom:var(--gap-lg)" })
+		wrap.append(el("div", { className: "section-title" }, title, el("span", { className: "count" }, String(rows.length))))
+		if (!rows.length) wrap.append(el("div", { className: "muted", style: "font-size:var(--font-size-sm)" }, "Нет записей."))
+		else rows.forEach((r) => wrap.append(el("div", { className: "mini-row" }, el("span", { className: "who" }, r.resident_name || "—"), el("span", { className: "where" }, `${r.hotel_name}, № ${r.room_number} · ${r.bed_label}`))))
+		return wrap
+	}
+	todayPanel.append(el("div", { className: "section-title" }, `Сегодня · ${d.date}`))
+	todayPanel.append(miniList("Заезды", d.arrivals), miniList("Выезды", d.departures))
+
+	const occPanel = el("div", { className: "panel" })
+	occPanel.append(el("div", { className: "section-title" }, "Загрузка по гостиницам"))
+	if (!d.hotels.length) occPanel.append(el("div", { className: "muted" }, "Нет гостиниц."))
+	d.hotels.forEach((h) => {
+		const row = el("div", { style: "margin-bottom:var(--gap-md)" })
+		row.append(el("div", { className: "row", style: "display:flex;justify-content:space-between;font-size:var(--font-size-sm)" }, el("span", {}, h.name), el("b", {}, `${h.occupied}/${h.beds} · ${h.load}%`)))
+		const track = el("div", { className: "bar-track" })
+		track.append(el("div", { className: "bar-fill", style: `width:${h.load}%` }))
+		row.append(track)
+		occPanel.append(row)
+	})
+
+	cols.append(todayPanel, occPanel)
+	body.append(cols)
 }
 
 async function renderPlan() {
