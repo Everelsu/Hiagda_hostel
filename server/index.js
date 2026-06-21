@@ -394,6 +394,25 @@ api.get("/residents", (req, res) => {
 			.all(q, q),
 	)
 })
+api.get("/residents/:id/card", (req, res) => {
+	const resident = db.prepare("SELECT * FROM residents WHERE id = ?").get(req.params.id)
+	if (!resident) return res.status(404).json({ error: "Проживающий не найден" })
+	const stays = db
+		.prepare(
+			`SELECT p.date_from, p.date_to, p.comment,
+				s.name AS status_name, s.color AS status_color,
+				b.label AS bed_label, rm.number AS room_number, h.name AS hotel_name
+			 FROM placements p
+			 JOIN beds b ON b.id = p.bed_id
+			 JOIN rooms rm ON rm.id = b.room_id
+			 JOIN hotels h ON h.id = rm.hotel_id
+			 JOIN statuses s ON s.id = p.status_id
+			 WHERE p.resident_id = ? ORDER BY p.date_from DESC`,
+		)
+		.all(req.params.id)
+	res.json({ resident, stays })
+})
+
 api.post("/residents", requireRole("editor"), (req, res) => {
 	const { full_name, tab_number, company, position, phone, note } = req.body || {}
 	if (!full_name) return res.status(400).json({ error: "Укажите ФИО" })

@@ -457,6 +457,26 @@ function renderStats() {
 	}
 }
 
+/* перетаскивание по шахматке для создания брони (как в Bnovo) */
+let dragState = null
+function updateDragHighlight() {
+	document.querySelectorAll("td.day.drag-sel").forEach((c) => c.classList.remove("drag-sel"))
+	if (!dragState) return
+	const [lo, hi] = [dragState.start, dragState.end].sort()
+	document.querySelectorAll(`td.day[data-bed="${dragState.bed.id}"]`).forEach((c) => {
+		if (c.dataset.date >= lo && c.dataset.date <= hi) c.classList.add("drag-sel")
+	})
+}
+document.addEventListener("mouseup", () => {
+	if (!dragState) return
+	const ds = dragState
+	dragState = null
+	updateDragHighlight()
+	const [from, to] = [ds.start, ds.end].sort()
+	if (from === to) placementModal(ds.bed, ds.existing, from)
+	else placementModal(ds.bed, null, from, refreshGrid, to)
+})
+
 function drawGrid(from, to) {
 	const days = eachDay(from, to)
 	const table = el("table", { className: "grid" })
@@ -515,7 +535,21 @@ function drawGrid(from, to) {
 						cell.append(el("div", { className: "bar", style: `background:${p.status_color}`, textContent: p.resident_name || p.status_name, title: `${p.status_name}: ${p.resident_name || ""} (${p.date_from}–${p.date_to})` }))
 					}
 				}
-				if (can("editor")) cell.onclick = () => placementModal(bed, p, ds)
+				if (can("editor")) {
+					cell.dataset.bed = bed.id
+					cell.dataset.date = ds
+					cell.onmousedown = (e) => {
+						e.preventDefault()
+						dragState = { bed, existing: p, start: ds, end: ds }
+						updateDragHighlight()
+					}
+					cell.onmouseenter = () => {
+						if (dragState && String(dragState.bed.id) === String(bed.id)) {
+							dragState.end = ds
+							updateDragHighlight()
+						}
+					}
+				}
 				tr.append(cell)
 			})
 			tb.append(tr)
@@ -554,8 +588,89 @@ function modal(title, bodyNodes, footNodes) {
 }
 const field = (labelText, input) => el("div", {}, el("label", {}, labelText), input)
 
+/* ---------- подтверждение ---------- */
+function confirmDialog(message, okText = "Удалить") {
+	return new Promise((resolve) => {
+		const close = modal(
+			"Подтверждение",
+			[el("p", { style: "margin:0" }, message)],
+			[
+				el("button", { className: "btn btn-transparent", textContent: "Отмена", onclick: () => { close(); resolve(false) } }),
+				Object.assign(el("button", { className: "btn btn-danger-fill", textContent: okText }), { onclick: () => { close(); resolve(true) } }),
+			],
+		)
+	})
+}
+
+/* ---------- карточка гостя ---------- */
+async function guestCard(id) {
+	let data
+	try {
+		data = await apiJson(`/residents/${id}/card`)
+	} catch (e) {
+		return toast(e.message)
+	}
+	const r = data.resident
+	const info = el("div", { className: "info-box" })
+	const line = (lbl, val) => val && info.append(el("div", {}, `${lbl}: `, el("b", {}, val)))
+	line("Таб. №", r.tab_number)
+	line("Организация", r.company)
+	line("Должность", r.position)
+	line("Телефон", r.phone)
+	line("Примечание", r.note)
+	if (!info.children.length) info.append(el("div", { className: "muted" }, "Доп. данных нет"))
+
+	const history = el("div", {})
+	history.append(el("div", { className: "section-title" }, "История проживаний", el("span", { className: "count" }, String(data.stays.length))))
+	if (!data.stays.length) {
+		history.append(el("div", { className: "empty-note" }, "Размещений нет."))
+	} else {
+		history.append(
+			dataTable(["Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус"], data.stays, (s) =>
+				el("tr", {}, el("td", {}, s.hotel_name), el("td", {}, s.room_number), el("td", {}, s.bed_label), el("td", {}, s.date_from), el("td", {}, s.date_to), statusCell(s.status_name, s.status_color)),
+			),
+		)
+	}
+
+	const close = modal(
+		r.full_name,
+		[info, history],
+		[
+			Object.assign(el("button", { className: "btn", textContent: "⭳ Отчёт в Excel" }), { onclick: () => download(`/report/resident/${r.id}`) }),
+			el("button", { className: "btn btn-primary", textContent: "Закрыть", onclick: () => close() }),
+		],
+	)
+}
+
+/* ---------- глобальный поиск ---------- */
+const gsInput = $("#global-search")
+const gsResults = $("#gsearch-results")
+gsInput.addEventListener("input", debounce(async () => {
+	const q = gsInput.value.trim()
+	if (q.length < 2) return gsResults.classList.add("hidden")
+	const people = await apiJson(`/residents?q=${encodeURIComponent(q)}`)
+	gsResults.innerHTML = ""
+	if (!people.length) {
+		gsResults.append(el("div", { className: "gs-item muted" }, "Ничего не найдено"))
+	} else {
+		people.slice(0, 8).forEach((p) => {
+			const item = el("div", { className: "gs-item" }, p.full_name, p.company || p.tab_number ? el("small", {}, ` · ${p.company || p.tab_number}`) : "")
+			item.onclick = () => {
+				gsResults.classList.add("hidden")
+				gsInput.value = ""
+				guestCard(p.id)
+			}
+			gsResults.append(item)
+		})
+	}
+	gsResults.classList.remove("hidden")
+}, 300))
+document.addEventListener("click", (e) => {
+	if (!e.target.closest(".gsearch-wrap")) gsResults.classList.add("hidden")
+})
+
 /* ---------- placement modal ---------- */
-function placementModal(bed, existing, date, onSaved) {
+function placementModal(bed, existing, date, onSaved, dateTo) {
 	const done = onSaved || refreshGrid
 	const resInput = el("input", { placeholder: "Начните вводить ФИО", value: existing?.resident_name || "" })
 	let residentId = existing?.resident_id || null
@@ -597,7 +712,7 @@ function placementModal(bed, existing, date, onSaved) {
 	}
 	const statusSel = makeSelect(S.statuses.map((s) => ({ value: s.id, label: s.name })), existing?.status_id ?? S.statuses[0]?.id)
 	const fromI = makeDatePicker(existing?.date_from || date)
-	const toI = makeDatePicker(existing?.date_to || date)
+	const toI = makeDatePicker(existing?.date_to || dateTo || date)
 	const commentI = el("textarea", { rows: 2, value: existing?.comment || "" })
 
 	const close = modal(
@@ -615,6 +730,7 @@ function placementModal(bed, existing, date, onSaved) {
 			existing && can("editor")
 				? Object.assign(el("button", { className: "btn btn-danger", textContent: "Удалить" }), {
 						onclick: async () => {
+							if (!(await confirmDialog("Удалить это размещение?"))) return
 							await api(`/placements/${existing.id}`, { method: "DELETE" })
 							close()
 							done()
@@ -663,7 +779,8 @@ $("#btn-hotels").onclick = async () => {
 			if (can("admin")) {
 				const del = el("button", { className: "btn btn-danger btn-sm icon-only", title: "Удалить" }, iconEl("x"))
 				del.onclick = async () => {
-					await api(`/hotels/${h.id}`, { method: "DELETE" })
+					if (!(await confirmDialog(`Удалить гостиницу «${h.name}» со всеми номерами?`))) return
+						await api(`/hotels/${h.id}`, { method: "DELETE" })
 					refresh()
 				}
 				li.append(del)
@@ -725,7 +842,8 @@ $("#btn-classes").onclick = async () => {
 				const del = el("button", { className: "btn btn-danger btn-sm icon-only", title: "Удалить" }, iconEl("x"))
 				del.onclick = async () => {
 					try {
-						await api(`/classes/${c.id}`, { method: "DELETE" })
+						if (!(await confirmDialog(`Удалить класс «${c.name}»?`))) return
+							await api(`/classes/${c.id}`, { method: "DELETE" })
 						S.classes = await apiJson("/classes")
 						render()
 					} catch (e) {
@@ -785,6 +903,7 @@ function roomModal(room) {
 			room && can("editor")
 				? Object.assign(el("button", { className: "btn btn-danger", textContent: "Удалить" }), {
 						onclick: async () => {
+							if (!(await confirmDialog(`Удалить номер № ${room.number} со всеми размещениями?`))) return
 							await api(`/rooms/${room.id}`, { method: "DELETE" })
 							close()
 							refreshGrid()
@@ -829,7 +948,8 @@ $("#btn-statuses").onclick = async () => {
 				const del = el("button", { className: "btn btn-danger btn-sm icon-only", title: "Удалить" }, iconEl("x"))
 				del.onclick = async () => {
 					try {
-						await api(`/statuses/${s.id}`, { method: "DELETE" })
+						if (!(await confirmDialog(`Удалить статус «${s.name}»?`))) return
+							await api(`/statuses/${s.id}`, { method: "DELETE" })
 						S.statuses = await apiJson("/statuses")
 						render()
 						renderLegend()
@@ -884,7 +1004,7 @@ $("#btn-residents").onclick = async () => {
 			li.append(rep)
 			if (can("editor")) {
 				const del = el("button", { className: "btn btn-danger btn-sm icon-only", title: "Удалить" }, iconEl("x"))
-				del.onclick = async () => { await api(`/residents/${p.id}`, { method: "DELETE" }); load() }
+				del.onclick = async () => { if (!(await confirmDialog(`Удалить проживающего «${p.full_name}»?`))) return; await api(`/residents/${p.id}`, { method: "DELETE" }); load() }
 				li.append(del)
 			}
 			listWrap.append(li)
@@ -980,7 +1100,8 @@ $("#btn-users").onclick = async () => {
 				const del = el("button", { className: "btn btn-danger btn-sm icon-only", title: "Удалить" }, iconEl("x"))
 				del.onclick = async () => {
 					try {
-						await api(`/users/${u.id}`, { method: "DELETE" })
+						if (!(await confirmDialog(`Удалить пользователя ${u.username}?`))) return
+							await api(`/users/${u.id}`, { method: "DELETE" })
 						load()
 					} catch (e) {
 						toast(e.message)
