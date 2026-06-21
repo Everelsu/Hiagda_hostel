@@ -48,6 +48,35 @@ api.post("/login", (req, res) => {
 	})
 })
 
+api.get("/kiosk/lookup", (req, res) => {
+	const q = (req.query.q || "").trim()
+	if (q.length < 2) return res.json([])
+	const today = new Date().toISOString().slice(0, 10)
+	const people = db
+		.prepare("SELECT id, full_name, company, tab_number FROM residents WHERE full_name LIKE ? OR tab_number LIKE ? ORDER BY full_name LIMIT 8")
+		.all(`%${q}%`, `%${q}%`)
+	const plStmt = db.prepare(
+		`SELECT rm.id AS room_id, rm.number AS room_number, rm.floor, rm.hotel_id,
+			h.name AS hotel_name, b.label AS bed_label,
+			p.date_from, p.date_to, s.name AS status_name, s.color AS status_color
+		 FROM placements p
+		 JOIN beds b ON b.id = p.bed_id
+		 JOIN rooms rm ON rm.id = b.room_id
+		 JOIN hotels h ON h.id = rm.hotel_id
+		 JOIN statuses s ON s.id = p.status_id
+		 WHERE p.resident_id = ? AND p.date_from <= ? AND p.date_to >= ?
+		 ORDER BY p.date_from LIMIT 1`,
+	)
+	const floorStmt = db.prepare("SELECT number FROM rooms WHERE hotel_id = ? AND IFNULL(floor,-999) = IFNULL(?,-999) ORDER BY number")
+	const result = people.map((person) => {
+		const placement = plStmt.get(person.id, today, today)
+		let floorRooms = []
+		if (placement) floorRooms = floorStmt.all(placement.hotel_id, placement.floor).map((r) => r.number)
+		return { id: person.id, full_name: person.full_name, company: person.company, placement: placement || null, floorRooms }
+	})
+	res.json(result)
+})
+
 api.use(authenticate)
 
 const AUDIT_LABELS = [
@@ -687,6 +716,7 @@ async function sendXlsx(res, data, name, header) {
 }
 
 app.use("/api", api)
+app.get("/kiosk", (_req, res) => res.sendFile(path.join(__dirname, "..", "public", "kiosk.html")))
 app.use(express.static(path.join(__dirname, "..", "public")))
 
 const PORT = process.env.PORT || 3000
