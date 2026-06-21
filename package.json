@@ -1,0 +1,26 @@
+{
+	"name": "nochotel",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Учёт номерного фонда вахтовых гостиниц (АО Хиагда). Веб-приложение в стиле Noctrinth/Modrinth.",
+	"type": "commonjs",
+	"scripts": {
+		"start": "node server/index.js",
+		"dev": "node --watch server/index.js",
+		"seed": "node server/seed.js"
+	},
+	"dependencies": {
+		"bcryptjs": "^2.4.3",
+		"better-sqlite3": "^11.3.0",
+		"cors": "^2.8.5",
+		"express": "^4.21.0",
+		"jsonwebtoken": "^9.0.2",
+		"multer": "^2.0.0",
+		"exceljs": "^4.4.0"
+	},
+	"overrides": {
+		"exceljs": {
+			"uuid": "^11.1.1"
+		}
+	}
+}
