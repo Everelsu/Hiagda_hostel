@@ -132,6 +132,8 @@ html {
 	--font-weight-medium: 500;
 	--font-weight-bold: 700;
 	--font-weight-extrabold: 800;
+
+	--day-w: 36px;
 }
 
 /* ============================================================
@@ -1062,18 +1064,18 @@ table.grid th.weekend {
 	background: var(--surface-2);
 }
 td.day {
-	width: 30px;
-	min-width: 30px;
-	height: 32px;
+	width: var(--day-w);
+	min-width: var(--day-w);
+	height: 34px;
 	padding: 0;
 	position: relative;
 	cursor: pointer;
 }
 td.day.col-today {
-	box-shadow: inset 0 0 0 1px var(--color-brand-highlight);
+	background: var(--color-brand-highlight);
 }
 td.day:hover {
-	filter: brightness(1.4);
+	background: var(--color-button-bg);
 }
 td.day.drag-sel {
 	background: var(--color-brand-highlight) !important;
@@ -1081,16 +1083,22 @@ td.day.drag-sel {
 }
 .bar {
 	position: absolute;
-	inset: 3px;
-	border-radius: var(--radius-xs);
+	left: 3px;
+	top: 4px;
+	bottom: 4px;
+	z-index: 2;
+	pointer-events: none;
+	border-radius: var(--radius-sm);
 	font-size: var(--font-size-xs);
 	color: var(--color-accent-contrast);
-	padding: 0 var(--gap-xs);
+	padding: 0 8px;
 	overflow: hidden;
 	white-space: nowrap;
+	text-overflow: ellipsis;
 	display: flex;
 	align-items: center;
 	font-weight: var(--font-weight-bold);
+	box-shadow: var(--shadow-raised-lg);
 }
 
 /* ============================================================
@@ -1155,6 +1163,32 @@ td.day.drag-sel {
 }
 .list .li .grow {
 	flex: 1;
+}
+.li-ava svg {
+	width: 1.7rem;
+	height: 1.7rem;
+	color: var(--color-secondary);
+}
+.li-title {
+	color: var(--color-contrast);
+	font-weight: var(--font-weight-bold);
+	font-size: var(--font-size-sm);
+}
+.li-sub {
+	color: var(--color-secondary);
+	font-size: var(--font-size-xs);
+}
+.tag.role-admin {
+	background: var(--color-brand-highlight);
+	color: var(--color-brand);
+}
+.tag.role-editor {
+	background: var(--color-green-bg);
+	color: var(--color-green);
+}
+.tag.role-viewer {
+	background: var(--color-button-bg);
+	color: var(--color-secondary);
 }
 
 .toast {

@@ -589,6 +589,7 @@ document.addEventListener("mouseup", () => {
 
 function drawGrid(from, to) {
 	const days = eachDay(from, to)
+	const dayStrs = days.map(fmt)
 	const table = el("table", { className: "grid" })
 	const thead = el("thead")
 	const hr = el("tr")
@@ -635,16 +636,10 @@ function drawGrid(from, to) {
 			const tr = el("tr")
 			tr.append(el("td", { className: "cell-label", style: "min-width:160px;padding-left:24px", textContent: bed.label }))
 			const list = S.placements[bed.id] || []
-			days.forEach((d) => {
-				const ds = fmt(d)
+			const cells = []
+			dayStrs.forEach((ds) => {
 				const cell = el("td", { className: ds === todayStr ? "day col-today" : "day" })
 				const p = list.find((x) => x.date_from <= ds && x.date_to >= ds)
-				if (p) {
-					cell.style.background = p.status_color
-					if (p.date_from === ds || d.getDay() === 1) {
-						cell.append(el("div", { className: "bar", style: `background:${p.status_color}`, textContent: p.resident_name || p.status_name, title: `${p.status_name}: ${p.resident_name || ""} (${p.date_from}–${p.date_to})` }))
-					}
-				}
 				if (can("editor")) {
 					cell.dataset.bed = bed.id
 					cell.dataset.date = ds
@@ -660,8 +655,27 @@ function drawGrid(from, to) {
 						}
 					}
 				}
+				cells.push(cell)
 				tr.append(cell)
 			})
+			const lastStr = dayStrs[dayStrs.length - 1]
+			for (const p of list) {
+				if (p.date_to < dayStrs[0] || p.date_from > lastStr) continue
+				const s = p.date_from <= dayStrs[0] ? 0 : dayStrs.indexOf(p.date_from)
+				const e = p.date_to >= lastStr ? dayStrs.length - 1 : dayStrs.indexOf(p.date_to)
+				if (s < 0 || e < 0) continue
+				const span = e - s + 1
+				const bar = el(
+					"div",
+					{
+						className: "bar",
+						style: `background:${p.status_color};width:calc(${span} * var(--day-w) - 6px)`,
+						title: `${p.status_name}: ${p.resident_name || "—"} (${p.date_from} – ${p.date_to})`,
+					},
+					p.resident_name || p.status_name,
+				)
+				cells[s].appendChild(bar)
+			}
 			tb.append(tr)
 		}
 	}
@@ -1208,8 +1222,10 @@ $("#btn-users").onclick = async () => {
 		const users = await apiJson("/users")
 		listWrap.innerHTML = ""
 		users.forEach((u) => {
-			const roleTag = el("span", { className: "tag", title: ROLE_DESC[u.role] }, ROLE_OPTIONS.find((r) => r[0] === u.role)?.[1] || u.role)
-			const li = el("div", { className: "li" }, el("span", { className: "grow" }, `${u.username}${u.full_name ? ` · ${u.full_name}` : ""}`), roleTag)
+			const roleTag = el("span", { className: `tag role-${u.role}`, title: ROLE_DESC[u.role] }, ROLE_OPTIONS.find((r) => r[0] === u.role)?.[1] || u.role)
+			const ava = iconEl("circle-user", "li-ava")
+			const info = el("div", { className: "grow" }, el("div", { className: "li-title" }, u.full_name || u.username), el("div", { className: "li-sub" }, `@${u.username}`))
+			const li = el("div", { className: "li" }, ava, info, roleTag)
 			const edit = el("button", { className: "btn btn-transparent btn-sm icon-only", title: "Изменить" }, iconEl("pencil"))
 			edit.onclick = () => userForm(u, load)
 			li.append(edit)
