@@ -47,11 +47,13 @@ function showResult(m) {
 		return
 	}
 	const p = m.placement
+	const PERIOD = { now: "Вы проживаете здесь сейчас", upcoming: "Заезд запланирован", past: "Проживание завершено" }
 	const card = el("div", { className: "res-card" })
 	card.append(el("div", { className: "name" }, m.full_name))
 	card.append(el("div", { className: "room-no" }, `№ ${p.room_number}`))
 	card.append(el("p", { className: "meta" }, `${p.hotel_name}${p.floor != null ? `, этаж ${p.floor}` : ""} · ${p.bed_label}`))
 	card.append(el("p", { className: "meta", style: "color:var(--color-secondary)" }, `Период: ${p.date_from} – ${p.date_to}`))
+	if (PERIOD[p.period]) card.append(el("p", { className: "meta", style: "color:var(--color-secondary);margin-top:.25rem" }, PERIOD[p.period]))
 	card.append(el("span", { className: "status", style: `background:${p.status_color}` }, p.status_name))
 	out.append(card)
 

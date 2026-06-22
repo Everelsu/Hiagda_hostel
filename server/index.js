@@ -58,18 +58,23 @@ api.get("/kiosk/lookup", (req, res) => {
 	const plStmt = db.prepare(
 		`SELECT rm.id AS room_id, rm.number AS room_number, rm.floor, rm.hotel_id,
 			h.name AS hotel_name, b.label AS bed_label,
-			p.date_from, p.date_to, s.name AS status_name, s.color AS status_color
+			p.date_from, p.date_to, s.name AS status_name, s.color AS status_color,
+			CASE WHEN ? BETWEEN p.date_from AND p.date_to THEN 'now'
+			     WHEN p.date_from > ? THEN 'upcoming' ELSE 'past' END AS period
 		 FROM placements p
 		 JOIN beds b ON b.id = p.bed_id
 		 JOIN rooms rm ON rm.id = b.room_id
 		 JOIN hotels h ON h.id = rm.hotel_id
 		 JOIN statuses s ON s.id = p.status_id
-		 WHERE p.resident_id = ? AND p.date_from <= ? AND p.date_to >= ?
-		 ORDER BY p.date_from LIMIT 1`,
+		 WHERE p.resident_id = ?
+		 ORDER BY
+			CASE WHEN ? BETWEEN p.date_from AND p.date_to THEN 0 WHEN p.date_from > ? THEN 1 ELSE 2 END,
+			CASE WHEN p.date_from > ? THEN julianday(p.date_from) ELSE -julianday(p.date_from) END
+		 LIMIT 1`,
 	)
 	const floorStmt = db.prepare("SELECT number FROM rooms WHERE hotel_id = ? AND IFNULL(floor,-999) = IFNULL(?,-999) ORDER BY number")
 	const result = people.map((person) => {
-		const placement = plStmt.get(person.id, today, today)
+		const placement = plStmt.get(today, today, person.id, today, today, today)
 		let floorRooms = []
 		if (placement) floorRooms = floorStmt.all(placement.hotel_id, placement.floor).map((r) => r.number)
 		return { id: person.id, full_name: person.full_name, company: person.company, placement: placement || null, floorRooms }

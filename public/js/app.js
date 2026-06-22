@@ -362,8 +362,8 @@ async function renderDashboard() {
 		b.onclick = fn
 		actions.append(b)
 	}
-	act("Шахматка", "calendar", () => showView("rack"))
-	act("План размещения", "layout", () => showView("plan"))
+	act("Календарь", "calendar", () => showView("rack"))
+	act("План этажа", "layout", () => showView("plan"))
 	if (can("editor")) act("Добавить номер", "key", () => roomModal(null))
 	if (can("editor")) act("Импорт из Excel", "upload", () => $("#btn-import").click())
 	body.append(actions)
@@ -519,7 +519,7 @@ function renderLegend() {
 			el("div", { className: "item" }, el("span", { className: "swatch", style: `background:${s.color}` }), s.name),
 		),
 	)
-	lg.append(el("span", { className: "muted", style: "margin-left:auto;font-size:12px" }, "Клик по ячейке — добавить/изменить размещение"))
+	lg.append(el("span", { className: "muted", style: "margin-left:auto;font-size:12px" }, "Нажмите на пустую клетку места, чтобы заселить · на плашку — изменить"))
 }
 
 /* ---------- grid ---------- */
@@ -837,6 +837,22 @@ function placementModal(bed, existing, date, onSaved, dateTo) {
 			}
 			suggest.append(item)
 		})
+		const exact = people.some((p) => p.full_name.toLowerCase() === q.toLowerCase())
+		if (!exact && can("editor")) {
+			const add = el("div", { className: "li", style: "cursor:pointer;color:var(--color-green);font-weight:var(--font-weight-bold)" }, iconEl("plus"), el("span", { className: "grow" }, `Добавить нового: «${q}»`))
+			add.onclick = async () => {
+				try {
+					const r = await apiJson("/residents", { method: "POST", body: JSON.stringify({ full_name: q }) })
+					residentId = r.id
+					resInput.value = q
+					suggest.innerHTML = ""
+					toast("Проживающий создан")
+				} catch (e) {
+					toast(e.message)
+				}
+			}
+			suggest.append(add)
+		}
 	}
 	if (existing?.resident_id) {
 		apiJson(`/residents?q=${encodeURIComponent(existing.resident_name || "")}`).then((people) => {
@@ -968,7 +984,7 @@ $("#btn-classes").onclick = async () => {
 	const listWrap = el("div", { className: "list" })
 	const render = () => {
 		listWrap.innerHTML = ""
-		if (!S.classes.length) listWrap.append(el("p", { className: "muted" }, "Классов пока нет."))
+		if (!S.classes.length) listWrap.append(el("p", { className: "muted" }, "Типов пока нет."))
 		S.classes.forEach((c) => {
 			const li = el("div", { className: "li" }, el("span", { className: "grow" }, c.name))
 			if (can("admin")) {
@@ -991,8 +1007,8 @@ $("#btn-classes").onclick = async () => {
 	render()
 	const name = el("input", { placeholder: "Напр. Двухместный, Люкс" })
 	const close = modal(
-		"Классы номеров",
-		[listWrap, can("editor") ? field("Новый класс", name) : el("span")],
+		"Типы номеров",
+		[listWrap, can("editor") ? field("Новый тип", name) : el("span")],
 		[
 			can("editor")
 				? Object.assign(el("button", { className: "btn", textContent: "Добавить" }), {
@@ -1028,7 +1044,7 @@ function roomModal(room) {
 		room ? `Номер № ${room.number}` : "Новый номер",
 		[
 			field("Гостиница", hotelSel),
-			el("div", { className: "row2" }, field("Номер", number), field("Класс", classSel)),
+			el("div", { className: "row2" }, field("Номер", number), field("Тип", classSel)),
 			el("div", { className: "row2" }, field("Этаж", floor), field("Кол-во мест", capacity)),
 			field("Доп. информация", desc),
 		],
