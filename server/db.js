@@ -68,6 +68,8 @@ db.exec(`
 		bed_id      INTEGER NOT NULL REFERENCES beds(id) ON DELETE CASCADE,
 		resident_id INTEGER REFERENCES residents(id) ON DELETE SET NULL,
 		status_id   INTEGER NOT NULL REFERENCES statuses(id) ON DELETE RESTRICT,
+		stage       TEXT NOT NULL DEFAULT 'expected'
+			CHECK (stage IN ('expected','checked_in','checked_out','cancelled')),
 		date_from   TEXT NOT NULL,
 		date_to     TEXT NOT NULL,
 		comment     TEXT,
@@ -90,5 +92,18 @@ db.exec(`
 	CREATE INDEX IF NOT EXISTS idx_placements_bed ON placements(bed_id);
 	CREATE INDEX IF NOT EXISTS idx_placements_dates ON placements(date_from, date_to);
 `)
+
+const placementCols = db.prepare("PRAGMA table_info(placements)").all()
+if (!placementCols.some((c) => c.name === "stage")) {
+	db.exec(
+		"ALTER TABLE placements ADD COLUMN stage TEXT NOT NULL DEFAULT 'expected' " +
+			"CHECK (stage IN ('expected','checked_in','checked_out','cancelled'))",
+	)
+	db.prepare(
+		`UPDATE placements SET stage = 'checked_in'
+		 WHERE status_id IN (SELECT id FROM statuses WHERE name LIKE '%рожива%')`,
+	).run()
+}
+db.exec("CREATE INDEX IF NOT EXISTS idx_placements_stage ON placements(stage)")
 
 module.exports = db

@@ -18,6 +18,25 @@ const ROLE_RANK = { viewer: 1, editor: 2, admin: 3 }
 const can = (role) => S.user && ROLE_RANK[S.user.role] >= ROLE_RANK[role]
 const isFreeStatus = (n) => /свобод/i.test(n || "")
 
+/* ---------- жизненный цикл брони (по мотивам статусов заказа QloApps) ---------- */
+const STAGES = {
+	expected: { label: "Ожидается", color: "#5fc8ff", next: ["checked_in", "cancelled"] },
+	checked_in: { label: "Проживает", color: "#1bd96a", next: ["checked_out", "cancelled"] },
+	checked_out: { label: "Выехал", color: "#8a93a3", next: ["checked_in"] },
+	cancelled: { label: "Отменён", color: "#ff5c5c", next: ["expected"] },
+}
+const STAGE_ACTION = {
+	expected: "Вернуть в ожидание",
+	checked_in: "Заселить",
+	checked_out: "Выселить",
+	cancelled: "Отменить",
+}
+const stageInfo = (stage) => STAGES[stage] || STAGES.expected
+const stageBadge = (stage) => {
+	const s = stageInfo(stage)
+	return el("span", { className: "stage-badge", title: "Стадия брони" }, el("span", { className: "stage-dot", style: `background:${s.color}` }), s.label)
+}
+
 async function api(pathName, opts = {}) {
 	const res = await fetch(`/api${pathName}`, {
 		...opts,
@@ -248,7 +267,7 @@ async function renderMovements() {
 			wrap.append(el("div", { className: "empty-note" }, "Нет записей на эту дату."))
 		} else {
 			wrap.append(
-				dataTable(["Гость", "Гостиница", "Номер", "Место", "Период", "Статус"], rows, (r) =>
+				dataTable(["Гость", "Гостиница", "Номер", "Место", "Период", "Статус", "Стадия"], rows, (r) =>
 					el(
 						"tr",
 						{},
@@ -258,6 +277,7 @@ async function renderMovements() {
 						el("td", {}, r.bed_label),
 						el("td", {}, `${r.date_from} – ${r.date_to}`),
 						statusCell(r.status_name, r.status_color),
+						el("td", {}, stageBadge(r.stage)),
 					),
 				),
 			)
@@ -288,7 +308,7 @@ async function renderJournal() {
 		return
 	}
 	body.append(
-		dataTable(["Гость", "Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус"], journalRows, (r) =>
+		dataTable(["Гость", "Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус", "Стадия"], journalRows, (r) =>
 			el(
 				"tr",
 				{},
@@ -299,6 +319,7 @@ async function renderJournal() {
 				el("td", {}, r.date_from),
 				el("td", {}, r.date_to),
 				statusCell(r.status_name, r.status_color),
+				el("td", {}, stageBadge(r.stage)),
 			),
 		),
 	)
@@ -351,10 +372,32 @@ async function renderDashboard() {
 
 	const t = d.totals
 	const stats = el("div", { className: "stats", style: "padding:0" })
-	;[["Гостиниц", t.hotels], ["Номеров", t.rooms], ["Мест всего", t.beds], ["Занято сегодня", t.occupied], ["Свободно", t.free], ["Загрузка", `${t.load}%`]].forEach(([l, v]) =>
-		stats.append(el("div", { className: "stat-card" }, el("div", { className: "value" }, String(v)), el("p", { className: "label" }, l))),
+	;[
+		["Загрузка", `${t.load}%`, "accent"],
+		["Заезды сегодня", t.checkins, ""],
+		["Выезды сегодня", t.checkouts, ""],
+		["Проживает сейчас", t.inhouse, ""],
+		["Свободно мест", t.free, ""],
+		["Номеров", t.rooms, ""],
+	].forEach(([l, v, mod]) =>
+		stats.append(el("div", { className: `stat-card${mod ? " stat-accent" : ""}` }, el("div", { className: "value" }, String(v)), el("p", { className: "label" }, l))),
 	)
 	body.append(stats)
+
+	if (d.stages) {
+		const chips = el("div", { className: "stage-chips" })
+		Object.keys(STAGES).forEach((key) => {
+			const s = stageInfo(key)
+			chips.append(
+				el("div", { className: "stage-chip", style: `--chip:${s.color}` },
+					el("span", { className: "stage-dot", style: `background:${s.color}` }),
+					el("span", { className: "stage-chip-label" }, s.label),
+					el("b", {}, String(d.stages[key] || 0)),
+				),
+			)
+		})
+		body.append(chips)
+	}
 
 	const actions = el("div", { className: "quick-actions" })
 	const act = (label, icon, fn) => {
@@ -395,6 +438,24 @@ async function renderDashboard() {
 
 	cols.append(todayPanel, occPanel)
 	body.append(cols)
+
+	if (d.trend?.length) {
+		const panel = el("div", { className: "panel" })
+		panel.append(el("div", { className: "section-title" }, "Динамика загрузки · 14 дней"))
+		const peak = Math.max(1, ...d.trend.map((x) => x.load))
+		const chart = el("div", { className: "trend-chart" })
+		d.trend.forEach((x) => {
+			const day = parse(x.date)
+			const col = el("div", { className: "trend-col", title: `${x.date}: ${x.occupied} мест · ${x.load}%` })
+			const bar = el("div", { className: "trend-bar" }, el("span", { className: "trend-val" }, `${x.load}%`))
+			bar.style.height = `${Math.round((x.load / peak) * 100)}%`
+			if (x.date === d.date) bar.classList.add("today")
+			col.append(bar, el("span", { className: "trend-x" }, `${String(day.getDate()).padStart(2, "0")}.${String(day.getMonth() + 1).padStart(2, "0")}`))
+			chart.append(col)
+		})
+		panel.append(chart)
+		body.append(panel)
+	}
 }
 
 async function renderPlan() {
@@ -752,8 +813,8 @@ async function guestCard(id) {
 		history.append(el("div", { className: "empty-note" }, "Размещений нет."))
 	} else {
 		history.append(
-			dataTable(["Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус"], data.stays, (s) =>
-				el("tr", {}, el("td", {}, s.hotel_name), el("td", {}, s.room_number), el("td", {}, s.bed_label), el("td", {}, s.date_from), el("td", {}, s.date_to), statusCell(s.status_name, s.status_color)),
+			dataTable(["Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус", "Стадия"], data.stays, (s) =>
+				el("tr", {}, el("td", {}, s.hotel_name), el("td", {}, s.room_number), el("td", {}, s.bed_label), el("td", {}, s.date_from), el("td", {}, s.date_to), statusCell(s.status_name, s.status_color), el("td", {}, stageBadge(s.stage))),
 			),
 		)
 	}
@@ -860,6 +921,9 @@ function placementModal(bed, existing, date, onSaved, dateTo) {
 		})
 	}
 	const statusSel = makeSelect(S.statuses.map((s) => ({ value: s.id, label: s.name })), existing?.status_id ?? S.statuses[0]?.id)
+	const curStage = existing?.stage || "expected"
+	const stageOpts = existing ? [curStage, ...stageInfo(curStage).next] : ["expected", "checked_in"]
+	const stageSel = makeSelect(stageOpts.map((v) => ({ value: v, label: stageInfo(v).label })), curStage)
 	const fromI = makeDatePicker(existing?.date_from || date)
 	const toI = makeDatePicker(existing?.date_to || dateTo || date)
 	const commentI = el("textarea", { rows: 2, value: existing?.comment || "" })
@@ -872,7 +936,7 @@ function placementModal(bed, existing, date, onSaved, dateTo) {
 			suggest,
 			infoBox,
 			el("div", { className: "row2" }, field("Заезд", fromI), field("Выезд", toI)),
-			field("Статус", statusSel),
+			el("div", { className: "row2" }, field("Статус", statusSel), field("Стадия брони", stageSel)),
 			field("Комментарий", commentI),
 		],
 		[
@@ -893,6 +957,7 @@ function placementModal(bed, existing, date, onSaved, dateTo) {
 						bed_id: bed.id,
 						resident_id: residentId,
 						status_id: Number(statusSel.value),
+						stage: stageSel.value,
 						date_from: fromI.value,
 						date_to: toI.value,
 						comment: commentI.value,

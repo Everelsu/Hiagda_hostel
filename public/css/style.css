@@ -1280,3 +1280,97 @@ textarea {
 		transform: translate(-50%, 0);
 	}
 }
+
+/* ============================================================
+   Стадии брони (жизненный цикл) и KPI-дашборд
+   ============================================================ */
+.stat-card.stat-accent {
+	background: var(--color-brand-highlight);
+	border-color: var(--color-brand);
+}
+.stat-card.stat-accent .value {
+	color: var(--color-brand);
+}
+
+.stage-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--gap-xs);
+	white-space: nowrap;
+	font-size: var(--font-size-sm);
+}
+.stage-dot {
+	display: inline-block;
+	width: 9px;
+	height: 9px;
+	border-radius: var(--radius-max);
+	flex-shrink: 0;
+}
+
+.stage-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--gap-md);
+}
+.stage-chip {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	padding: var(--gap-sm) var(--gap-md);
+	background: var(--surface-3);
+	border: 1px solid var(--surface-4);
+	border-left: 3px solid var(--chip);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-card);
+}
+.stage-chip-label {
+	font-size: var(--font-size-sm);
+	color: var(--color-secondary);
+}
+.stage-chip b {
+	color: var(--color-contrast);
+	font-weight: var(--font-weight-extrabold);
+}
+
+.trend-chart {
+	display: flex;
+	align-items: flex-end;
+	gap: var(--gap-sm);
+	height: 160px;
+	padding-top: var(--gap-md);
+}
+.trend-col {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--gap-xs);
+	height: 100%;
+	justify-content: flex-end;
+}
+.trend-bar {
+	width: 70%;
+	min-height: 2px;
+	background: var(--color-brand);
+	border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+	display: flex;
+	justify-content: center;
+	align-items: flex-start;
+	position: relative;
+	transition: height 0.25s ease;
+	opacity: 0.55;
+}
+.trend-bar.today {
+	opacity: 1;
+}
+.trend-val {
+	font-size: 0.6rem;
+	color: var(--color-secondary);
+	transform: translateY(-1.1em);
+	position: absolute;
+	top: 0;
+}
+.trend-x {
+	font-size: 0.65rem;
+	color: var(--color-secondary);
+}

@@ -8,6 +8,15 @@ const ExcelJS = require("exceljs")
 const db = require("./db")
 const { sign, authenticate, requireRole } = require("./auth")
 
+const STAGES = ["expected", "checked_in", "checked_out", "cancelled"]
+const STAGE_TRANSITIONS = {
+	expected: ["checked_in", "cancelled"],
+	checked_in: ["checked_out", "cancelled"],
+	checked_out: ["checked_in"],
+	cancelled: ["expected"],
+}
+const canTransition = (from, to) => from === to || STAGE_TRANSITIONS[from]?.includes(to)
+
 const app = express()
 app.use(cors())
 app.use(express.json())
@@ -132,7 +141,7 @@ api.get("/audit", requireRole("admin"), (req, res) => {
 api.get("/movements", (req, res) => {
 	const date = req.query.date || new Date().toISOString().slice(0, 10)
 	const base = `
-		SELECT p.id, p.date_from, p.date_to, p.comment,
+		SELECT p.id, p.date_from, p.date_to, p.comment, p.stage,
 			r.full_name AS resident_name, r.company,
 			s.name AS status_name, s.color AS status_color,
 			b.label AS bed_label, rm.number AS room_number, h.name AS hotel_name
@@ -168,7 +177,7 @@ api.get("/journal", (req, res) => {
 	res.json(
 		db
 			.prepare(
-				`SELECT p.id, p.date_from, p.date_to, p.comment,
+				`SELECT p.id, p.date_from, p.date_to, p.comment, p.stage,
 					r.full_name AS resident_name,
 					s.name AS status_name, s.color AS status_color,
 					b.label AS bed_label, rm.number AS room_number, h.name AS hotel_name
@@ -218,7 +227,8 @@ api.get("/dashboard", (req, res) => {
 		const occupied = db
 			.prepare(
 				`SELECT COUNT(DISTINCT b.id) c FROM beds b JOIN rooms r ON r.id = b.room_id
-				 JOIN placements p ON p.bed_id = b.id WHERE r.hotel_id = ? AND p.date_from <= ? AND p.date_to >= ?`,
+				 JOIN placements p ON p.bed_id = b.id
+				 WHERE r.hotel_id = ? AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ?`,
 			)
 			.get(h.id, today, today).c
 		const rooms = db.prepare("SELECT COUNT(*) c FROM rooms WHERE hotel_id = ?").get(h.id).c
@@ -227,6 +237,38 @@ api.get("/dashboard", (req, res) => {
 		tOcc += occupied
 		return { ...h, rooms, beds, occupied, free: beds - occupied, load: beds ? Math.round((occupied / beds) * 100) : 0 }
 	})
+
+	const trendStmt = db.prepare(
+		`SELECT COUNT(DISTINCT p.bed_id) c FROM placements p
+		 WHERE p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ?`,
+	)
+	const trend = []
+	for (let i = 0; i < 14; i++) {
+		const d = new Date(`${today}T00:00:00`)
+		d.setDate(d.getDate() + i)
+		const day = d.toISOString().slice(0, 10)
+		const occ = trendStmt.get(day, day).c
+		trend.push({ date: day, occupied: occ, load: tBeds ? Math.round((occ / tBeds) * 100) : 0 })
+	}
+
+	const stageRow = db
+		.prepare(
+			`SELECT
+				SUM(CASE WHEN stage = 'expected' THEN 1 ELSE 0 END) expected,
+				SUM(CASE WHEN stage = 'checked_in' THEN 1 ELSE 0 END) checked_in,
+				SUM(CASE WHEN stage = 'checked_out' THEN 1 ELSE 0 END) checked_out,
+				SUM(CASE WHEN stage = 'cancelled' THEN 1 ELSE 0 END) cancelled
+			 FROM placements WHERE date_to >= ?`,
+		)
+		.get(today)
+	const stages = {
+		expected: stageRow.expected || 0,
+		checked_in: stageRow.checked_in || 0,
+		checked_out: stageRow.checked_out || 0,
+		cancelled: stageRow.cancelled || 0,
+	}
+	const countOn = (col) =>
+		db.prepare(`SELECT COUNT(*) c FROM placements WHERE ${col} = ? AND stage <> 'cancelled'`).get(today).c
 	const moveBase = `
 		SELECT p.date_from, p.date_to, r.full_name AS resident_name,
 			rm.number AS room_number, h.name AS hotel_name, b.label AS bed_label
@@ -244,10 +286,15 @@ api.get("/dashboard", (req, res) => {
 			occupied: tOcc,
 			free: tBeds - tOcc,
 			load: tBeds ? Math.round((tOcc / tBeds) * 100) : 0,
+			checkins: countOn("date_from"),
+			checkouts: countOn("date_to"),
+			inhouse: stages.checked_in,
 		},
+		stages,
+		trend,
 		hotels: hotelStats,
-		arrivals: db.prepare(`${moveBase} WHERE p.date_from = ? ORDER BY h.name, rm.number LIMIT 12`).all(today),
-		departures: db.prepare(`${moveBase} WHERE p.date_to = ? ORDER BY h.name, rm.number LIMIT 12`).all(today),
+		arrivals: db.prepare(`${moveBase} WHERE p.date_from = ? AND p.stage <> 'cancelled' ORDER BY h.name, rm.number LIMIT 12`).all(today),
+		departures: db.prepare(`${moveBase} WHERE p.date_to = ? AND p.stage <> 'cancelled' ORDER BY h.name, rm.number LIMIT 12`).all(today),
 	})
 })
 
@@ -263,7 +310,7 @@ api.get("/plan", (req, res) => {
 		.all(req.query.hotel_id)
 	const bedStmt = db.prepare("SELECT * FROM beds WHERE room_id = ? ORDER BY id")
 	const plStmt = db.prepare(
-		`SELECT p.id, p.resident_id, p.date_from, p.date_to, p.comment,
+		`SELECT p.id, p.resident_id, p.date_from, p.date_to, p.comment, p.stage,
 			r.full_name AS resident_name, s.name AS status_name, s.color AS status_color
 		 FROM placements p
 		 JOIN statuses s ON s.id = p.status_id
@@ -477,7 +524,7 @@ api.get("/residents/:id/card", (req, res) => {
 	if (!resident) return res.status(404).json({ error: "Проживающий не найден" })
 	const stays = db
 		.prepare(
-			`SELECT p.date_from, p.date_to, p.comment,
+			`SELECT p.date_from, p.date_to, p.comment, p.stage,
 				s.name AS status_name, s.color AS status_color,
 				b.label AS bed_label, rm.number AS room_number, h.name AS hotel_name
 			 FROM placements p
@@ -547,9 +594,11 @@ function findConflict(bedId, from, to, excludeId) {
 
 api.post("/placements", requireRole("editor"), (req, res) => {
 	const { bed_id, resident_id, status_id, date_from, date_to, comment } = req.body || {}
+	const stage = req.body?.stage || "expected"
 	if (!bed_id || !status_id || !date_from || !date_to) {
 		return res.status(400).json({ error: "Заполните место, статус и даты" })
 	}
+	if (!STAGES.includes(stage)) return res.status(400).json({ error: "Неизвестная стадия брони" })
 	if (date_to < date_from) return res.status(400).json({ error: "Дата выезда раньше даты заезда" })
 	const conflict = findConflict(bed_id, date_from, date_to)
 	if (conflict) {
@@ -558,30 +607,47 @@ api.post("/placements", requireRole("editor"), (req, res) => {
 		})
 	}
 	const info = db
-		.prepare("INSERT INTO placements (bed_id, resident_id, status_id, date_from, date_to, comment) VALUES (?,?,?,?,?,?)")
-		.run(bed_id, resident_id || null, status_id, date_from, date_to, comment || null)
+		.prepare("INSERT INTO placements (bed_id, resident_id, status_id, stage, date_from, date_to, comment) VALUES (?,?,?,?,?,?,?)")
+		.run(bed_id, resident_id || null, status_id, stage, date_from, date_to, comment || null)
 	res.json({ id: info.lastInsertRowid })
 })
 api.put("/placements/:id", requireRole("editor"), (req, res) => {
 	const { resident_id, status_id, date_from, date_to, comment } = req.body || {}
 	if (!status_id || !date_from || !date_to) return res.status(400).json({ error: "Заполните статус и даты" })
 	if (date_to < date_from) return res.status(400).json({ error: "Дата выезда раньше даты заезда" })
-	const current = db.prepare("SELECT bed_id FROM placements WHERE id = ?").get(req.params.id)
+	const current = db.prepare("SELECT bed_id, stage FROM placements WHERE id = ?").get(req.params.id)
 	if (!current) return res.status(404).json({ error: "Размещение не найдено" })
+	const stage = req.body?.stage || current.stage
+	if (!STAGES.includes(stage)) return res.status(400).json({ error: "Неизвестная стадия брони" })
+	if (!canTransition(current.stage, stage)) {
+		return res.status(409).json({ error: "Недопустимый переход стадии брони" })
+	}
 	const conflict = findConflict(current.bed_id, date_from, date_to, req.params.id)
 	if (conflict) {
 		return res.status(409).json({
 			error: `Место занято: ${conflict.who} (${conflict.date_from} – ${conflict.date_to})`,
 		})
 	}
-	db.prepare("UPDATE placements SET resident_id=?, status_id=?, date_from=?, date_to=?, comment=? WHERE id=?").run(
+	db.prepare("UPDATE placements SET resident_id=?, status_id=?, stage=?, date_from=?, date_to=?, comment=? WHERE id=?").run(
 		resident_id || null,
 		status_id,
+		stage,
 		date_from,
 		date_to,
 		comment || null,
 		req.params.id,
 	)
+	res.json({ ok: true })
+})
+api.post("/placements/:id/stage", requireRole("editor"), (req, res) => {
+	const stage = req.body?.stage
+	if (!STAGES.includes(stage)) return res.status(400).json({ error: "Неизвестная стадия брони" })
+	const current = db.prepare("SELECT stage FROM placements WHERE id = ?").get(req.params.id)
+	if (!current) return res.status(404).json({ error: "Размещение не найдено" })
+	if (!canTransition(current.stage, stage)) {
+		return res.status(409).json({ error: "Недопустимый переход стадии брони" })
+	}
+	db.prepare("UPDATE placements SET stage = ? WHERE id = ?").run(stage, req.params.id)
 	res.json({ ok: true })
 })
 api.delete("/placements/:id", requireRole("editor"), (req, res) => {
