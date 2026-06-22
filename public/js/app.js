@@ -408,7 +408,7 @@ async function renderDashboard() {
 	act("Календарь", "calendar", () => showView("rack"))
 	act("План этажа", "layout", () => showView("plan"))
 	if (can("editor")) act("Добавить номер", "key", () => roomModal(null))
-	if (can("editor")) act("Импорт из Excel", "upload", () => $("#btn-import").click())
+	if (can("editor")) act("Импорт из Excel", "upload", () => openImport())
 	body.append(actions)
 
 	const cols = el("div", { className: "dash-cols" })
@@ -764,14 +764,14 @@ async function download(pathName) {
 function modal(title, bodyNodes, footNodes) {
 	const root = $("#modal-root")
 	const overlay = el("div", { className: "overlay" })
+	const closeThis = () => overlay.remove()
 	overlay.onclick = (e) => {
-		if (e.target === overlay) root.innerHTML = ""
+		if (e.target === overlay) closeThis()
 	}
 	const box = el("div", { className: "modal" }, el("h3", {}, title), el("div", { className: "body" }, ...bodyNodes), el("div", { className: "foot" }, ...footNodes))
 	overlay.append(box)
-	root.innerHTML = ""
 	root.append(overlay)
-	return () => (root.innerHTML = "")
+	return closeThis
 }
 const field = (labelText, input) => el("div", {}, el("label", {}, labelText), input)
 
@@ -813,8 +813,10 @@ async function guestCard(id) {
 		history.append(el("div", { className: "empty-note" }, "Размещений нет."))
 	} else {
 		history.append(
-			dataTable(["Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус", "Стадия"], data.stays, (s) =>
-				el("tr", {}, el("td", {}, s.hotel_name), el("td", {}, s.room_number), el("td", {}, s.bed_label), el("td", {}, s.date_from), el("td", {}, s.date_to), statusCell(s.status_name, s.status_color), el("td", {}, stageBadge(s.stage))),
+			el("div", { className: "table-scroll" },
+				dataTable(["Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус", "Стадия"], data.stays, (s) =>
+					el("tr", {}, el("td", {}, s.hotel_name), el("td", {}, s.room_number), el("td", {}, s.bed_label), el("td", {}, s.date_from), el("td", {}, s.date_to), statusCell(s.status_name, s.status_color), el("td", {}, stageBadge(s.stage))),
+				),
 			),
 		)
 	}
@@ -823,8 +825,8 @@ async function guestCard(id) {
 		r.full_name,
 		[info, history],
 		[
-			Object.assign(el("button", { className: "btn", textContent: "⭳ Excel" }), { onclick: () => download(`/report/resident/${r.id}`) }),
-			Object.assign(el("button", { className: "btn", textContent: "🖨 Печать / PDF" }), {
+			Object.assign(el("button", { className: "btn" }, iconEl("download"), "Excel"), { onclick: () => download(`/report/resident/${r.id}`) }),
+			Object.assign(el("button", { className: "btn" }, iconEl("book"), "Печать / PDF"), {
 				onclick: () => {
 					const meta = [`Таб. №: ${r.tab_number || "—"}`, `Организация: ${r.company || "—"}`, `Должность: ${r.position || "—"}`, `Телефон: ${r.phone || "—"}`]
 					const rows = data.stays.map((s) => [s.hotel_name, s.room_number, s.bed_label, s.date_from, s.date_to, s.status_name])
@@ -868,7 +870,7 @@ function placementModal(bed, existing, date, onSaved, dateTo) {
 	const done = onSaved || refreshGrid
 	const resInput = el("input", { placeholder: "Начните вводить ФИО", value: existing?.resident_name || "" })
 	let residentId = existing?.resident_id || null
-	const suggest = el("div", { className: "list" })
+	const suggest = el("div", { className: "list suggest-panel" })
 	const infoBox = el("div", { className: "info-box hidden" })
 	const showInfo = (p) => {
 		if (!p) return infoBox.classList.add("hidden")
@@ -976,15 +978,54 @@ function placementModal(bed, existing, date, onSaved, dateTo) {
 	)
 }
 
-/* ---------- hotel / room modals ---------- */
-$("#btn-hotels").onclick = async () => {
+/* ---------- номерной фонд: гостиницы · номера · типы · статусы ---------- */
+async function reloadFundData() {
 	S.hotels = await apiJson("/hotels")
+	S.classes = await apiJson("/classes")
+	S.statuses = await apiJson("/statuses")
+}
+$("#btn-roomfund").onclick = async () => {
+	await reloadFundData()
+	const refreshAll = async () => {
+		await reloadFundData()
+		await boot()
+	}
+	tabsModal("Номерной фонд", [
+		{ label: "Гостиницы", render: (c) => renderHotelsManager(c, refreshAll) },
+		{ label: "Номера", render: (c) => renderRoomsManager(c, refreshAll) },
+		{ label: "Типы", render: (c) => renderClassesManager(c, refreshAll) },
+		{ label: "Статусы", render: (c) => renderStatusesManager(c, refreshAll) },
+	])
+}
+function tabsModal(title, tabs) {
+	const bar = el("div", { className: "tab-bar" })
+	const panel = el("div", { className: "tab-panel" })
+	const show = (i) => {
+		bar.querySelectorAll(".tab-btn").forEach((b, idx) => b.classList.toggle("active", idx === i))
+		panel.innerHTML = ""
+		tabs[i].render(panel)
+	}
+	tabs.forEach((t, i) => {
+		const b = el("button", { className: "tab-btn", type: "button", textContent: t.label })
+		b.onclick = () => show(i)
+		bar.append(b)
+	})
+	const close = modal(
+		title,
+		[el("div", { className: "tabbed" }, bar, panel)],
+		[el("button", { className: "btn btn-primary", textContent: "Закрыть", onclick: () => close() })],
+	)
+	show(0)
+	return close
+}
+function renderHotelsManager(container, refreshAll) {
 	const listWrap = el("div", { className: "list" })
 	const render = () => {
 		listWrap.innerHTML = ""
 		if (!S.hotels.length) listWrap.append(el("p", { className: "muted" }, "Гостиниц пока нет."))
 		S.hotels.forEach((h) => {
-			const li = el("div", { className: "li" }, el("span", { className: "grow" }, `${h.name}${h.location ? ` · ${h.location}` : ""}`))
+			const info = el("div", { className: "grow" }, el("div", { className: "li-title" }, h.name), el("div", { className: "li-sub" }, h.location || "—"))
+			const li = el("div", { className: "li" }, iconEl("home", "li-ava"), info)
 			if (can("editor")) {
 				const edit = el("button", { className: "btn btn-transparent btn-sm icon-only", title: "Изменить" }, iconEl("pencil"))
 				edit.onclick = () => hotelForm(h, refresh)
@@ -1002,20 +1043,15 @@ $("#btn-hotels").onclick = async () => {
 			listWrap.append(li)
 		})
 	}
-	async function refresh() {
-		S.hotels = await apiJson("/hotels")
+	const refresh = async () => {
+		await refreshAll()
 		render()
-		await boot()
 	}
 	render()
-	const close = modal(
-		"Гостиницы",
-		[listWrap],
-		[
-			can("editor") ? Object.assign(el("button", { className: "btn", textContent: "+ Добавить гостиницу" }), { onclick: () => hotelForm(null, refresh) }) : el("span"),
-			el("button", { className: "btn btn-primary", textContent: "Закрыть", onclick: () => close() }),
-		],
-	)
+	if (can("editor")) {
+		container.append(el("div", { className: "tab-actions" }, Object.assign(el("button", { className: "btn btn-sm" }, iconEl("plus"), "Добавить гостиницу"), { onclick: () => hotelForm(null, refresh) })))
+	}
+	container.append(listWrap)
 }
 
 function hotelForm(hotel, onSaved) {
@@ -1043,22 +1079,20 @@ function hotelForm(hotel, onSaved) {
 	)
 }
 
-/* ---------- классы номеров ---------- */
-$("#btn-classes").onclick = async () => {
-	S.classes = await apiJson("/classes")
+function renderClassesManager(container, refreshAll) {
 	const listWrap = el("div", { className: "list" })
 	const render = () => {
 		listWrap.innerHTML = ""
 		if (!S.classes.length) listWrap.append(el("p", { className: "muted" }, "Типов пока нет."))
 		S.classes.forEach((c) => {
-			const li = el("div", { className: "li" }, el("span", { className: "grow" }, c.name))
+			const li = el("div", { className: "li" }, iconEl("bookmark", "li-ava"), el("span", { className: "grow li-title" }, c.name))
 			if (can("admin")) {
 				const del = el("button", { className: "btn btn-danger btn-sm icon-only", title: "Удалить" }, iconEl("x"))
 				del.onclick = async () => {
 					try {
-						if (!(await confirmDialog(`Удалить класс «${c.name}»?`))) return
-							await api(`/classes/${c.id}`, { method: "DELETE" })
-						S.classes = await apiJson("/classes")
+						if (!(await confirmDialog(`Удалить тип «${c.name}»?`))) return
+						await api(`/classes/${c.id}`, { method: "DELETE" })
+						await refreshAll()
 						render()
 					} catch (e) {
 						toast(e.message)
@@ -1070,33 +1104,52 @@ $("#btn-classes").onclick = async () => {
 		})
 	}
 	render()
-	const name = el("input", { placeholder: "Напр. Двухместный, Люкс" })
-	const close = modal(
-		"Типы номеров",
-		[listWrap, can("editor") ? field("Новый тип", name) : el("span")],
-		[
-			can("editor")
-				? Object.assign(el("button", { className: "btn", textContent: "Добавить" }), {
-						onclick: async () => {
-							if (!name.value.trim()) return
-							try {
-								await api("/classes", { method: "POST", body: JSON.stringify({ name: name.value.trim() }) })
-								S.classes = await apiJson("/classes")
-								render()
-								name.value = ""
-							} catch (e) {
-								toast(e.message)
-							}
-						},
-					})
-				: el("span"),
-			el("button", { className: "btn btn-primary", textContent: "Готово", onclick: () => { close(); boot() } }),
-		],
-	)
+	if (can("editor")) {
+		const name = el("input", { placeholder: "Напр. Двухместный, Люкс" })
+		const add = Object.assign(el("button", { className: "btn btn-sm" }, iconEl("plus"), "Добавить"), {
+			onclick: async () => {
+				if (!name.value.trim()) return
+				try {
+					await api("/classes", { method: "POST", body: JSON.stringify({ name: name.value.trim() }) })
+					await refreshAll()
+					render()
+					name.value = ""
+				} catch (e) {
+					toast(e.message)
+				}
+			},
+		})
+		container.append(el("div", { className: "tab-add" }, name, add))
+	}
+	container.append(listWrap)
 }
 
-$("#btn-add-room").onclick = () => roomModal(null)
-function roomModal(room) {
+function renderRoomsManager(container, refreshAll) {
+	const listWrap = el("div", { className: "list" })
+	const load = async () => {
+		const rooms = await apiJson("/rooms")
+		listWrap.innerHTML = ""
+		if (!rooms.length) listWrap.append(el("p", { className: "muted" }, "Номеров пока нет."))
+		rooms.forEach((r) => {
+			const sub = [r.hotel_name, r.class_name, r.floor != null ? `этаж ${r.floor}` : null, `мест: ${r.capacity}`].filter(Boolean).join(" · ")
+			const info = el("div", { className: "grow" }, el("div", { className: "li-title" }, `№ ${r.number}`), el("div", { className: "li-sub" }, sub))
+			const li = el("div", { className: "li" }, iconEl("key", "li-ava"), info)
+			if (can("editor")) {
+				const edit = el("button", { className: "btn btn-transparent btn-sm icon-only", title: "Изменить" }, iconEl("pencil"))
+				edit.onclick = () => roomModal(r, async () => { await load(); await refreshAll() })
+				li.append(edit)
+			}
+			listWrap.append(li)
+		})
+	}
+	if (can("editor")) {
+		container.append(el("div", { className: "tab-actions" }, Object.assign(el("button", { className: "btn btn-sm" }, iconEl("plus"), "Добавить номер"), { onclick: () => roomModal(null, async () => { await load(); await refreshAll() }) })))
+	}
+	container.append(listWrap)
+	load()
+}
+
+function roomModal(room, onSaved) {
 	const hotelSel = makeSelect(S.hotels.map((h) => ({ value: h.id, label: h.name })), room ? room.hotel_id : $("#f-hotel").value)
 	if (room) hotelSel.setDisabled(true)
 	const classSel = makeSelect([{ value: "", label: "—" }, ...S.classes.map((c) => ({ value: c.id, label: c.name }))], room?.class_id ?? "")
@@ -1121,10 +1174,11 @@ function roomModal(room) {
 							await api(`/rooms/${room.id}`, { method: "DELETE" })
 							close()
 							refreshGrid()
+							onSaved?.()
 						},
 					})
 				: el("span"),
-			el("button", { className: "btn btn-transparent", textContent: "Отмена", onclick: close }),
+			el("button", { className: "btn btn-transparent", textContent: "Отмена", onclick: () => close() }),
 			Object.assign(el("button", { className: "btn btn-primary", textContent: "Сохранить" }), {
 				onclick: async () => {
 					const payload = {
@@ -1140,6 +1194,7 @@ function roomModal(room) {
 						else await api("/rooms", { method: "POST", body: JSON.stringify(payload) })
 						close()
 						refreshGrid()
+						onSaved?.()
 					} catch (e) {
 						toast(e.message)
 					}
@@ -1149,22 +1204,20 @@ function roomModal(room) {
 	)
 }
 
-/* ---------- statuses ---------- */
-$("#btn-statuses").onclick = async () => {
-	S.statuses = await apiJson("/statuses")
+function renderStatusesManager(container, refreshAll) {
 	const listWrap = el("div", { className: "list" })
 	const render = () => {
 		listWrap.innerHTML = ""
 		S.statuses.forEach((s) => {
 			const sw = el("span", { className: "swatch swatch-lg", style: `background:${s.color}` })
-			const li = el("div", { className: "li" }, sw, el("span", { className: "grow" }, s.name))
+			const li = el("div", { className: "li" }, sw, el("span", { className: "grow li-title" }, s.name))
 			if (can("admin")) {
 				const del = el("button", { className: "btn btn-danger btn-sm icon-only", title: "Удалить" }, iconEl("x"))
 				del.onclick = async () => {
 					try {
 						if (!(await confirmDialog(`Удалить статус «${s.name}»?`))) return
-							await api(`/statuses/${s.id}`, { method: "DELETE" })
-						S.statuses = await apiJson("/statuses")
+						await api(`/statuses/${s.id}`, { method: "DELETE" })
+						await refreshAll()
 						render()
 						renderLegend()
 					} catch (e) {
@@ -1177,30 +1230,26 @@ $("#btn-statuses").onclick = async () => {
 		})
 	}
 	render()
-	const name = el("input", { placeholder: "Название статуса" })
-	const color = makeColorPicker("#1bd96a")
-	const close = modal(
-		"Статусы номеров",
-		[
-			listWrap,
-			can("editor") ? el("div", {}, field("Новый статус", name), el("div", { style: "margin-top:12px" }, field("Цвет", color))) : el("span"),
-		],
-		[
-			can("editor")
-				? Object.assign(el("button", { className: "btn", textContent:"Добавить" }), {
-						onclick: async () => {
-							if (!name.value) return
-							await api("/statuses", { method: "POST", body: JSON.stringify({ name: name.value, color: color.value, sort: S.statuses.length }) })
-							S.statuses = await apiJson("/statuses")
-							render()
-							renderLegend()
-							name.value = ""
-						},
-					})
-				: el("span"),
-			el("button", { className: "btn btn-primary", textContent: "Готово", onclick: () => { close(); refreshGrid() } }),
-		],
-	)
+	if (can("editor")) {
+		const name = el("input", { placeholder: "Название статуса" })
+		const color = makeColorPicker("#1bd96a")
+		const add = Object.assign(el("button", { className: "btn btn-sm" }, iconEl("plus"), "Добавить статус"), {
+			onclick: async () => {
+				if (!name.value) return
+				try {
+					await api("/statuses", { method: "POST", body: JSON.stringify({ name: name.value, color: color.value, sort: S.statuses.length }) })
+					await refreshAll()
+					render()
+					renderLegend()
+					name.value = ""
+				} catch (e) {
+					toast(e.message)
+				}
+			},
+		})
+		container.append(el("div", { className: "tab-add-col" }, field("Новый статус", name), field("Цвет", color), add))
+	}
+	container.append(listWrap)
 }
 
 /* ---------- residents ---------- */
@@ -1212,13 +1261,17 @@ $("#btn-residents").onclick = async () => {
 		listWrap.innerHTML = ""
 		if (!people.length) listWrap.append(el("p", { className: "muted" }, "Никого не найдено."))
 		people.forEach((p) => {
-			const li = el("div", { className: "li" }, el("span", { className: "grow" }, `${p.full_name}${p.company ? ` · ${p.company}` : ""}${p.tab_number ? ` · ${p.tab_number}` : ""}`))
+			const sub = [p.company, p.position, p.tab_number ? `таб. ${p.tab_number}` : null].filter(Boolean).join(" · ") || "—"
+			const ava = iconEl("circle-user", "li-ava")
+			const info = el("div", { className: "grow" }, el("div", { className: "li-title" }, p.full_name), el("div", { className: "li-sub" }, sub))
+			const li = el("div", { className: "li clickable", title: "Открыть карточку проживающего" }, ava, info)
+			li.onclick = () => guestCard(p.id)
 			const rep = el("button", { className: "btn btn-transparent btn-sm icon-only", title: "Отчёт по проживающему" }, iconEl("download"))
-			rep.onclick = () => download(`/report/resident/${p.id}`)
+			rep.onclick = (e) => { e.stopPropagation(); download(`/report/resident/${p.id}`) }
 			li.append(rep)
 			if (can("editor")) {
 				const del = el("button", { className: "btn btn-danger btn-sm icon-only", title: "Удалить" }, iconEl("x"))
-				del.onclick = async () => { if (!(await confirmDialog(`Удалить проживающего «${p.full_name}»?`))) return; await api(`/residents/${p.id}`, { method: "DELETE" }); load() }
+				del.onclick = async (e) => { e.stopPropagation(); if (!(await confirmDialog(`Удалить проживающего «${p.full_name}»?`))) return; await api(`/residents/${p.id}`, { method: "DELETE" }); load() }
 				li.append(del)
 			}
 			listWrap.append(li)
@@ -1243,6 +1296,9 @@ $("#btn-residents").onclick = async () => {
 		],
 		[
 			can("editor")
+				? Object.assign(el("button", { className: "btn" }, iconEl("upload"), "Импорт из Excel"), { onclick: () => openImport(load) })
+				: el("span"),
+			can("editor")
 				? Object.assign(el("button", { className: "btn", textContent:"Добавить" }), {
 						onclick: async () => {
 							if (!fio.value) return
@@ -1252,14 +1308,14 @@ $("#btn-residents").onclick = async () => {
 						},
 					})
 				: el("span"),
-			el("button", { className: "btn btn-primary", textContent: "Закрыть", onclick: close }),
+			el("button", { className: "btn btn-primary", textContent: "Закрыть", onclick: () => close() }),
 		],
 	)
 	fio.placeholder = "ФИО"; tab.placeholder = "Таб. №"; comp.placeholder = "Организация"; pos.placeholder = "Должность"; phone.placeholder = "Телефон"
 }
 
 /* ---------- import ---------- */
-$("#btn-import").onclick = () => {
+function openImport(onDone) {
 	const file = el("input", { type: "file", accept: ".xlsx,.xls" })
 	const close = modal(
 		"Импорт проживающих из Excel",
@@ -1268,7 +1324,7 @@ $("#btn-import").onclick = () => {
 			field("Файл .xlsx", file),
 		],
 		[
-			el("button", { className: "btn btn-transparent", textContent: "Отмена", onclick: close }),
+			el("button", { className: "btn btn-transparent", textContent: "Отмена", onclick: () => close() }),
 			Object.assign(el("button", { className: "btn btn-primary", textContent: "Загрузить" }), {
 				onclick: async () => {
 					if (!file.files[0]) return
@@ -1278,6 +1334,7 @@ $("#btn-import").onclick = () => {
 						const r = await apiJson("/import/residents", { method: "POST", body: fd })
 						toast(`Импортировано: ${r.imported}`)
 						close()
+						onDone?.()
 					} catch (e) {
 						toast(e.message)
 					}

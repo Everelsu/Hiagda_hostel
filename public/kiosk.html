@@ -63,6 +63,9 @@
 				gap: var(--gap-sm);
 			}
 			.pick-item {
+				display: flex;
+				align-items: center;
+				gap: 1rem;
 				text-align: left;
 				font-size: 1.15rem;
 				padding: 1rem 1.25rem;
@@ -74,9 +77,56 @@
 			}
 			.pick-item:hover {
 				border-color: var(--color-green);
+				background: var(--surface-4);
+			}
+			.pick-ava {
+				font-size: 1.8rem;
+				line-height: 1;
+				flex-shrink: 0;
+			}
+			.pick-text {
+				display: flex;
+				flex-direction: column;
+			}
+			.pick-name {
+				font-weight: var(--font-weight-bold);
 			}
 			.pick-item small {
 				color: var(--color-secondary);
+			}
+			.kiosk-overlay {
+				position: fixed;
+				inset: 0;
+				background: rgba(0, 0, 0, 0.66);
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 20px;
+				z-index: 50;
+			}
+			.kiosk-pick {
+				width: 100%;
+				max-width: 560px;
+				max-height: 86vh;
+				overflow-y: auto;
+				background: var(--surface-3);
+				border: 1px solid var(--surface-4);
+				border-radius: var(--radius-xl);
+				box-shadow: var(--shadow-floating);
+				padding: 1.75rem;
+				display: grid;
+				gap: 1.25rem;
+			}
+			.pick-head {
+				margin: 0;
+				font-size: 1.3rem;
+				font-weight: var(--font-weight-bold);
+				color: var(--color-contrast);
+				text-align: center;
+			}
+			.pick-cancel {
+				justify-self: center;
+				font-size: 1.1rem;
 			}
 			.res-card {
 				background: var(--surface-3);
@@ -175,6 +225,7 @@
 
 			<div class="result-wrap" id="kiosk-result"></div>
 		</div>
+		<div id="kiosk-modal-root"></div>
 		<a class="staff-link" href="/">Вход для персонала</a>
 		<script src="/js/kiosk.js"></script>
 	</body>

@@ -1134,6 +1134,86 @@ td.day.drag-sel {
 	padding: var(--gap-xl);
 	display: grid;
 	gap: var(--gap-md);
+	grid-template-columns: minmax(0, 1fr);
+}
+.table-scroll {
+	overflow-x: auto;
+}
+
+/* Вкладки внутри модального окна */
+.tabbed {
+	display: grid;
+	gap: var(--gap-lg);
+}
+.tab-bar {
+	display: flex;
+	gap: var(--gap-xs);
+	background: var(--color-bg);
+	border: 1px solid var(--color-divider);
+	border-radius: var(--radius-md);
+	padding: 4px;
+}
+.tab-btn {
+	flex: 1;
+	border: none;
+	background: transparent;
+	color: var(--color-secondary);
+	font-weight: var(--font-weight-bold);
+	font-size: var(--font-size-sm);
+	padding: var(--gap-sm) var(--gap-md);
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+.tab-btn:hover {
+	color: var(--color-contrast);
+}
+.tab-btn.active {
+	background: var(--color-brand-highlight);
+	color: var(--color-brand);
+}
+.tab-panel {
+	display: grid;
+	gap: var(--gap-md);
+	min-height: 120px;
+}
+.tab-actions {
+	display: flex;
+	justify-content: flex-end;
+}
+.tab-add {
+	display: flex;
+	gap: var(--gap-sm);
+	align-items: center;
+}
+.tab-add input {
+	flex: 1;
+}
+.tab-add-col {
+	display: grid;
+	gap: var(--gap-sm);
+}
+
+/* Панель автоподсказок ФИО в размещении */
+.suggest-panel {
+	max-height: 220px;
+	overflow-y: auto;
+	margin-top: calc(-1 * var(--gap-sm));
+	padding: var(--gap-xs);
+	background: var(--color-bg);
+	border: 1px solid var(--color-divider);
+	border-radius: var(--radius-md);
+	box-shadow: var(--shadow-card);
+}
+.suggest-panel:empty {
+	display: none;
+}
+.suggest-panel .li {
+	cursor: pointer;
+	border-color: transparent;
+}
+.suggest-panel .li:hover {
+	border-color: var(--color-brand);
+	background: var(--color-button-bg);
 }
 .modal .row2 {
 	display: grid;
@@ -1163,6 +1243,20 @@ td.day.drag-sel {
 }
 .list .li .grow {
 	flex: 1;
+	min-width: 0;
+}
+.list .li.clickable {
+	cursor: pointer;
+}
+.list .li.clickable:hover {
+	border-color: var(--color-brand);
+	background: var(--color-button-bg);
+}
+.li-title,
+.li-sub {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .li-ava svg {
 	width: 1.7rem;

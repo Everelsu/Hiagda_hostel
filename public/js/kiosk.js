@@ -8,10 +8,15 @@ const el = (tag, props = {}, ...kids) => {
 const form = $("#kiosk-form")
 const input = $("#kiosk-q")
 const out = $("#kiosk-result")
+const modalRoot = $("#kiosk-modal-root")
 
-form.addEventListener("submit", async (e) => {
-	e.preventDefault()
+let lastQuery = ""
+
+async function doSearch() {
 	const q = input.value.trim()
+	if (q === lastQuery) return
+	lastQuery = q
+	closePick()
 	out.innerHTML = ""
 	if (q.length < 2) return
 	let matches
@@ -21,21 +26,60 @@ form.addEventListener("submit", async (e) => {
 		out.append(el("div", { className: "empty-note muted" }, "Ошибка соединения. Попробуйте ещё раз."))
 		return
 	}
+	if (q !== input.value.trim()) return
 	if (!matches.length) {
 		out.append(el("div", { className: "empty-note muted" }, "Никого не найдено. Проверьте написание или обратитесь к коменданту."))
 		return
 	}
 	if (matches.length === 1) return showResult(matches[0])
+	openPick(matches)
+}
 
-	out.append(el("p", { className: "map-title" }, "Найдено несколько — выберите себя:"))
+function debounce(fn, ms) {
+	let t
+	return (...a) => {
+		clearTimeout(t)
+		t = setTimeout(() => fn(...a), ms)
+	}
+}
+
+form.addEventListener("submit", (e) => {
+	e.preventDefault()
+	lastQuery = ""
+	doSearch()
+})
+input.addEventListener("input", debounce(doSearch, 350))
+
+function openPick(matches) {
+	const overlay = el("div", { className: "kiosk-overlay" })
+	overlay.onclick = (e) => {
+		if (e.target === overlay) closePick()
+	}
+	const box = el("div", { className: "kiosk-pick" })
+	box.append(el("p", { className: "pick-head" }, "Найдено несколько — выберите себя"))
 	const list = el("div", { className: "pick-list" })
 	matches.forEach((m) => {
-		const item = el("button", { className: "pick-item", type: "button" }, el("div", {}, m.full_name), m.company ? el("small", {}, m.company) : "")
-		item.onclick = () => showResult(m)
+		const item = el("button", { className: "pick-item", type: "button" })
+		item.append(el("span", { className: "pick-ava" }, "👤"))
+		const text = el("span", { className: "pick-text" })
+		text.append(el("span", { className: "pick-name" }, m.full_name))
+		if (m.company) text.append(el("small", {}, m.company))
+		item.append(text)
+		item.onclick = () => {
+			closePick()
+			showResult(m)
+		}
 		list.append(item)
 	})
-	out.append(list)
-})
+	box.append(list)
+	box.append(Object.assign(el("button", { className: "btn pick-cancel", textContent: "Отмена" }), { onclick: closePick }))
+	overlay.append(box)
+	modalRoot.append(overlay)
+}
+
+function closePick() {
+	modalRoot.innerHTML = ""
+}
 
 function showResult(m) {
 	out.innerHTML = ""
@@ -79,6 +123,7 @@ function newSearchBtn() {
 	b.onclick = () => {
 		out.innerHTML = ""
 		input.value = ""
+		lastQuery = ""
 		input.focus()
 	}
 	wrap.append(b)
