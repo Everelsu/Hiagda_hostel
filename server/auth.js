@@ -4,9 +4,11 @@ const SECRET = process.env.JWT_SECRET || "nochotel-dev-secret-change-me"
 const ROLE_RANK = { viewer: 1, editor: 2, admin: 3 }
 
 function sign(user) {
-	return jwt.sign({ id: user.id, username: user.username, role: user.role }, SECRET, {
-		expiresIn: "12h",
-	})
+	return jwt.sign(
+		{ id: user.id, username: user.username, role: user.role, resident_id: user.resident_id ?? null },
+		SECRET,
+		{ expiresIn: "12h" },
+	)
 }
 
 function authenticate(req, res, next) {
@@ -23,11 +25,18 @@ function authenticate(req, res, next) {
 
 function requireRole(minRole) {
 	return (req, res, next) => {
-		if (!req.user || ROLE_RANK[req.user.role] < ROLE_RANK[minRole]) {
+		if (!req.user || (ROLE_RANK[req.user.role] || 0) < ROLE_RANK[minRole]) {
 			return res.status(403).json({ error: "Недостаточно прав" })
 		}
 		next()
 	}
 }
 
-module.exports = { sign, authenticate, requireRole, SECRET }
+function requireStaff(req, res, next) {
+	if (!req.user || !ROLE_RANK[req.user.role]) {
+		return res.status(403).json({ error: "Доступ только для персонала" })
+	}
+	next()
+}
+
+module.exports = { sign, authenticate, requireRole, requireStaff, SECRET }

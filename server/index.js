@@ -1,4 +1,5 @@
 const path = require("node:path")
+const fs = require("node:fs")
 const express = require("express")
 const cors = require("cors")
 const bcrypt = require("bcryptjs")
@@ -6,7 +7,7 @@ const multer = require("multer")
 const ExcelJS = require("exceljs")
 
 const db = require("./db")
-const { sign, authenticate, requireRole } = require("./auth")
+const { sign, authenticate, requireRole, requireStaff } = require("./auth")
 
 const STAGES = ["expected", "checked_in", "checked_out", "cancelled"]
 const STAGE_TRANSITIONS = {
@@ -16,6 +17,9 @@ const STAGE_TRANSITIONS = {
 	cancelled: ["expected"],
 }
 const canTransition = (from, to) => from === to || STAGE_TRANSITIONS[from]?.includes(to)
+const STAGE_LABELS = { expected: "Ожидается", checked_in: "Проживает", checked_out: "Выехал", cancelled: "Отменён" }
+const stageLabel = (stage) => STAGE_LABELS[stage] || STAGE_LABELS.expected
+const publicUser = (u) => ({ id: u.id, username: u.username, full_name: u.full_name, role: u.role, resident_id: u.resident_id ?? null })
 
 const app = express()
 app.use(cors())
@@ -39,10 +43,7 @@ api.post("/register-admin", (req, res) => {
 		.prepare("INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,'admin')")
 		.run(username, bcrypt.hashSync(password, 10), full_name || null)
 	const user = db.prepare("SELECT * FROM users WHERE id = ?").get(info.lastInsertRowid)
-	res.json({
-		token: sign(user),
-		user: { id: user.id, username: user.username, full_name: user.full_name, role: user.role },
-	})
+	res.json({ token: sign(user), user: publicUser(user) })
 })
 
 api.post("/login", (req, res) => {
@@ -51,10 +52,7 @@ api.post("/login", (req, res) => {
 	if (!user || !bcrypt.compareSync(password || "", user.password_hash)) {
 		return res.status(401).json({ error: "Неверный логин или пароль" })
 	}
-	res.json({
-		token: sign(user),
-		user: { id: user.id, username: user.username, full_name: user.full_name, role: user.role },
-	})
+	res.json({ token: sign(user), user: publicUser(user) })
 })
 
 api.get("/kiosk/lookup", (req, res) => {
@@ -132,6 +130,99 @@ api.use((req, res, next) => {
 })
 
 api.get("/me", (req, res) => res.json(req.user))
+
+api.post("/me/password", (req, res) => {
+	const { current, next } = req.body || {}
+	if (!next || next.length < 4) return res.status(400).json({ error: "Новый пароль слишком короткий (мин. 4 символа)" })
+	const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id)
+	if (!user || !bcrypt.compareSync(current || "", user.password_hash)) {
+		return res.status(400).json({ error: "Текущий пароль неверный" })
+	}
+	db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(bcrypt.hashSync(next, 10), req.user.id)
+	res.json({ ok: true })
+})
+
+function activePlacement(residentId) {
+	const today = new Date().toISOString().slice(0, 10)
+	return db
+		.prepare(
+			`SELECT p.id, p.date_from, p.date_to, p.stage, p.comment,
+				s.name AS status_name, s.color AS status_color,
+				b.id AS bed_id, b.label AS bed_label,
+				rm.id AS room_id, rm.number AS room_number, rm.floor, rm.capacity, rm.description AS room_description,
+				c.name AS class_name,
+				h.id AS hotel_id
+			 FROM placements p
+			 JOIN beds b ON b.id = p.bed_id
+			 JOIN rooms rm ON rm.id = b.room_id
+			 LEFT JOIN room_classes c ON c.id = rm.class_id
+			 JOIN hotels h ON h.id = rm.hotel_id
+			 JOIN statuses s ON s.id = p.status_id
+			 WHERE p.resident_id = ? AND p.stage <> 'cancelled'
+			 ORDER BY CASE WHEN ? BETWEEN p.date_from AND p.date_to THEN 0 WHEN p.date_from > ? THEN 1 ELSE 2 END,
+				abs(julianday(p.date_from) - julianday(?))
+			 LIMIT 1`,
+		)
+		.get(residentId, today, today, today)
+}
+
+api.get("/me/overview", (req, res) => {
+	const rid = req.user.resident_id
+	if (!rid) return res.json({ resident: null, placement: null, room: null, roommates: [], hotel: null })
+	const resident = db.prepare("SELECT id, full_name, tab_number, company, position, phone, about, photo FROM residents WHERE id = ?").get(rid)
+	const pl = activePlacement(rid)
+	let room = null
+	let roommates = []
+	let hotel = null
+	if (pl) {
+		const roomAmenities = db
+			.prepare("SELECT a.name, a.icon FROM room_amenities ra JOIN amenities a ON a.id = ra.amenity_id WHERE ra.room_id = ? ORDER BY a.name")
+			.all(pl.room_id)
+		room = {
+			id: pl.room_id,
+			number: pl.room_number,
+			floor: pl.floor,
+			capacity: pl.capacity,
+			class_name: pl.class_name,
+			description: pl.room_description,
+			amenities: roomAmenities,
+		}
+		roommates = db
+			.prepare(
+				`SELECT DISTINCT r.id, r.full_name, r.company, r.position, r.about, r.photo,
+					b.label AS bed_label, p.date_from, p.date_to
+				 FROM placements p
+				 JOIN beds b ON b.id = p.bed_id
+				 JOIN residents r ON r.id = p.resident_id
+				 WHERE b.room_id = ? AND p.stage <> 'cancelled' AND r.id <> ?
+					AND p.date_from <= ? AND p.date_to >= ?
+				 ORDER BY r.full_name`,
+			)
+			.all(pl.room_id, rid, pl.date_to, pl.date_from)
+		const h = db.prepare("SELECT id, name, location, settlement, address, phone, description, rules FROM hotels WHERE id = ?").get(pl.hotel_id)
+		const hotelAmenities = db
+			.prepare("SELECT a.name, a.icon FROM hotel_amenities ha JOIN amenities a ON a.id = ha.amenity_id WHERE ha.hotel_id = ? ORDER BY a.name")
+			.all(pl.hotel_id)
+		const places = db.prepare("SELECT id, name, kind, note, distance FROM places WHERE hotel_id = ? ORDER BY name").all(pl.hotel_id)
+		hotel = { ...h, amenities: hotelAmenities, places }
+	}
+	res.json({ resident, placement: pl || null, room, roommates, hotel })
+})
+
+api.put("/me/profile", (req, res) => {
+	const rid = req.user.resident_id
+	if (!rid) return res.status(400).json({ error: "Профиль не привязан" })
+	const { about, photo, phone } = req.body || {}
+	db.prepare("UPDATE residents SET about = ?, photo = ?, phone = ? WHERE id = ?").run(
+		about ?? null,
+		photo ?? null,
+		phone ?? null,
+		rid,
+	)
+	res.json({ ok: true })
+})
+
+api.use(requireStaff)
 
 api.get("/audit", requireRole("admin"), (req, res) => {
 	const limit = Math.min(500, Number(req.query.limit) || 200)
@@ -324,18 +415,30 @@ api.get("/plan", (req, res) => {
 	res.json({ date, rooms })
 })
 
+const ROLES = ["admin", "editor", "viewer", "resident"]
 api.get("/users", requireRole("admin"), (_req, res) => {
-	res.json(db.prepare("SELECT id, username, full_name, role, created_at FROM users ORDER BY username").all())
+	res.json(
+		db
+			.prepare(
+				`SELECT u.id, u.username, u.full_name, u.role, u.resident_id, u.created_at, r.full_name AS resident_name
+				 FROM users u LEFT JOIN residents r ON r.id = u.resident_id ORDER BY u.username`,
+			)
+			.all(),
+	)
 })
 api.post("/users", requireRole("admin"), (req, res) => {
 	const { username, password, full_name, role } = req.body || {}
-	if (!username || !password || !["admin", "editor", "viewer"].includes(role)) {
+	const resident_id = role === "resident" ? Number(req.body?.resident_id) || null : null
+	if (!username || !password || !ROLES.includes(role)) {
 		return res.status(400).json({ error: "Заполните логин, пароль и роль" })
+	}
+	if (role === "resident" && !resident_id) {
+		return res.status(400).json({ error: "Для роли «вахтовик» выберите проживающего" })
 	}
 	try {
 		const info = db
-			.prepare("INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,?)")
-			.run(username, bcrypt.hashSync(password, 10), full_name || null, role)
+			.prepare("INSERT INTO users (username, password_hash, full_name, role, resident_id) VALUES (?,?,?,?,?)")
+			.run(username, bcrypt.hashSync(password, 10), full_name || null, role, resident_id)
 		res.json({ id: info.lastInsertRowid })
 	} catch {
 		res.status(400).json({ error: "Такой логин уже существует" })
@@ -348,15 +451,22 @@ api.put("/users/:id", requireRole("admin"), (req, res) => {
 	const target = db.prepare("SELECT * FROM users WHERE id = ?").get(id)
 	if (!target) return res.status(404).json({ error: "Пользователь не найден" })
 	const { full_name, role, password } = req.body || {}
-	if (role && !["admin", "editor", "viewer"].includes(role)) {
+	if (role && !ROLES.includes(role)) {
 		return res.status(400).json({ error: "Некорректная роль" })
 	}
 	if (role && role !== "admin" && target.role === "admin" && countAdmins() <= 1) {
 		return res.status(400).json({ error: "Нельзя снять права у последнего администратора" })
 	}
-	db.prepare("UPDATE users SET full_name = ?, role = ? WHERE id = ?").run(
+	const nextRole = role || target.role
+	const resident_id =
+		nextRole === "resident" ? (req.body?.resident_id !== undefined ? Number(req.body.resident_id) || null : target.resident_id) : null
+	if (nextRole === "resident" && !resident_id) {
+		return res.status(400).json({ error: "Для роли «вахтовик» выберите проживающего" })
+	}
+	db.prepare("UPDATE users SET full_name = ?, role = ?, resident_id = ? WHERE id = ?").run(
 		full_name ?? target.full_name,
-		role || target.role,
+		nextRole,
+		resident_id,
 		id,
 	)
 	if (password) {
@@ -376,31 +486,88 @@ api.delete("/users/:id", requireRole("admin"), (req, res) => {
 	res.json({ ok: true })
 })
 
-api.post("/me/password", (req, res) => {
-	const { current, next } = req.body || {}
-	if (!next || next.length < 4) return res.status(400).json({ error: "Новый пароль слишком короткий (мин. 4 символа)" })
-	const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id)
-	if (!user || !bcrypt.compareSync(current || "", user.password_hash)) {
-		return res.status(400).json({ error: "Текущий пароль неверный" })
-	}
-	db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(bcrypt.hashSync(next, 10), req.user.id)
-	res.json({ ok: true })
-})
-
+const HOTEL_FIELDS = ["name", "location", "settlement", "address", "phone", "description", "rules"]
 api.get("/hotels", (_req, res) => res.json(db.prepare("SELECT * FROM hotels ORDER BY name").all()))
+api.get("/hotels/:id", (req, res) => {
+	const hotel = db.prepare("SELECT * FROM hotels WHERE id = ?").get(req.params.id)
+	if (!hotel) return res.status(404).json({ error: "Гостиница не найдена" })
+	hotel.amenities = db
+		.prepare("SELECT a.* FROM hotel_amenities ha JOIN amenities a ON a.id = ha.amenity_id WHERE ha.hotel_id = ? ORDER BY a.name")
+		.all(hotel.id)
+	hotel.places = db.prepare("SELECT * FROM places WHERE hotel_id = ? ORDER BY name").all(hotel.id)
+	res.json(hotel)
+})
 api.post("/hotels", requireRole("editor"), (req, res) => {
-	const { name, location } = req.body || {}
-	if (!name) return res.status(400).json({ error: "Укажите название" })
-	const info = db.prepare("INSERT INTO hotels (name, location) VALUES (?,?)").run(name, location || null)
+	const b = req.body || {}
+	if (!b.name) return res.status(400).json({ error: "Укажите название" })
+	const info = db
+		.prepare("INSERT INTO hotels (name, location, settlement, address, phone, description, rules) VALUES (?,?,?,?,?,?,?)")
+		.run(b.name, b.location || null, b.settlement || null, b.address || null, b.phone || null, b.description || null, b.rules || null)
 	res.json({ id: info.lastInsertRowid })
 })
 api.put("/hotels/:id", requireRole("editor"), (req, res) => {
-	const { name, location } = req.body || {}
-	db.prepare("UPDATE hotels SET name = ?, location = ? WHERE id = ?").run(name, location || null, req.params.id)
+	const b = req.body || {}
+	db.prepare(
+		"UPDATE hotels SET name=?, location=?, settlement=?, address=?, phone=?, description=?, rules=? WHERE id=?",
+	).run(b.name, b.location || null, b.settlement || null, b.address || null, b.phone || null, b.description || null, b.rules || null, req.params.id)
 	res.json({ ok: true })
 })
 api.delete("/hotels/:id", requireRole("admin"), (req, res) => {
 	db.prepare("DELETE FROM hotels WHERE id = ?").run(req.params.id)
+	res.json({ ok: true })
+})
+
+api.get("/hotels/:id/places", (req, res) =>
+	res.json(db.prepare("SELECT * FROM places WHERE hotel_id = ? ORDER BY name").all(req.params.id)),
+)
+api.post("/hotels/:id/places", requireRole("editor"), (req, res) => {
+	const { name, kind, note, distance } = req.body || {}
+	if (!name) return res.status(400).json({ error: "Укажите название места" })
+	const info = db
+		.prepare("INSERT INTO places (hotel_id, name, kind, note, distance) VALUES (?,?,?,?,?)")
+		.run(req.params.id, name, kind || null, note || null, distance || null)
+	res.json({ id: info.lastInsertRowid })
+})
+api.delete("/places/:id", requireRole("editor"), (req, res) => {
+	db.prepare("DELETE FROM places WHERE id = ?").run(req.params.id)
+	res.json({ ok: true })
+})
+
+api.get("/amenities", (_req, res) => res.json(db.prepare("SELECT * FROM amenities ORDER BY name").all()))
+api.post("/amenities", requireRole("editor"), (req, res) => {
+	const { name, icon, scope } = req.body || {}
+	if (!name) return res.status(400).json({ error: "Укажите название удобства" })
+	try {
+		const info = db
+			.prepare("INSERT INTO amenities (name, icon, scope) VALUES (?,?,?)")
+			.run(name, icon || "dot", ["room", "hotel", "both"].includes(scope) ? scope : "both")
+		res.json({ id: info.lastInsertRowid })
+	} catch {
+		res.status(400).json({ error: "Такое удобство уже есть" })
+	}
+})
+api.delete("/amenities/:id", requireRole("admin"), (req, res) => {
+	db.prepare("DELETE FROM amenities WHERE id = ?").run(req.params.id)
+	res.json({ ok: true })
+})
+api.put("/hotels/:id/amenities", requireRole("editor"), (req, res) => {
+	const ids = Array.isArray(req.body?.amenity_ids) ? req.body.amenity_ids.map(Number).filter(Boolean) : []
+	const tx = db.transaction(() => {
+		db.prepare("DELETE FROM hotel_amenities WHERE hotel_id = ?").run(req.params.id)
+		const ins = db.prepare("INSERT OR IGNORE INTO hotel_amenities (hotel_id, amenity_id) VALUES (?,?)")
+		for (const aid of ids) ins.run(req.params.id, aid)
+	})
+	tx()
+	res.json({ ok: true })
+})
+api.put("/rooms/:id/amenities", requireRole("editor"), (req, res) => {
+	const ids = Array.isArray(req.body?.amenity_ids) ? req.body.amenity_ids.map(Number).filter(Boolean) : []
+	const tx = db.transaction(() => {
+		db.prepare("DELETE FROM room_amenities WHERE room_id = ?").run(req.params.id)
+		const ins = db.prepare("INSERT OR IGNORE INTO room_amenities (room_id, amenity_id) VALUES (?,?)")
+		for (const aid of ids) ins.run(req.params.id, aid)
+	})
+	tx()
 	res.json({ ok: true })
 })
 
@@ -465,7 +632,11 @@ api.get("/rooms", (req, res) => {
 		)
 		.all(...args)
 	const bedsStmt = db.prepare("SELECT * FROM beds WHERE room_id = ? ORDER BY id")
-	for (const room of rooms) room.beds = bedsStmt.all(room.id)
+	const amenStmt = db.prepare("SELECT amenity_id FROM room_amenities WHERE room_id = ?")
+	for (const room of rooms) {
+		room.beds = bedsStmt.all(room.id)
+		room.amenity_ids = amenStmt.all(room.id).map((r) => r.amenity_id)
+	}
 	res.json(rooms)
 })
 
@@ -670,6 +841,7 @@ api.get("/report/room/:id", async (req, res) => {
 		.all(req.params.id)
 	const data = rows.map((r) => ({
 		Статус: r.status_name,
+		"Стадия": stageLabel(r.stage),
 		Проживающий: r.resident_name || "—",
 		"Заезд": r.date_from,
 		"Выезд": r.date_to,
@@ -687,7 +859,7 @@ api.get("/report/resident/:id", async (req, res) => {
 	if (!person) return res.status(404).json({ error: "Проживающий не найден" })
 	const rows = db
 		.prepare(
-			`SELECT p.date_from, p.date_to, p.comment, s.name AS status_name,
+			`SELECT p.date_from, p.date_to, p.comment, p.stage, s.name AS status_name,
 				rm.number AS room_number, h.name AS hotel_name, b.label AS bed_label
 			 FROM placements p
 			 JOIN beds b ON b.id = p.bed_id
@@ -702,6 +874,7 @@ api.get("/report/resident/:id", async (req, res) => {
 		Номер: r.room_number,
 		Место: r.bed_label,
 		Статус: r.status_name,
+		"Стадия": stageLabel(r.stage),
 		"Заезд": r.date_from,
 		"Выезд": r.date_to,
 		Комментарий: r.comment || "",
@@ -786,9 +959,22 @@ async function sendXlsx(res, data, name, header) {
 	res.send(Buffer.from(buf))
 }
 
+const publicDir = path.join(__dirname, "..", "public")
+const distDir = path.join(__dirname, "..", "dist")
+
 app.use("/api", api)
-app.get("/kiosk", (_req, res) => res.sendFile(path.join(__dirname, "..", "public", "kiosk.html")))
-app.use(express.static(path.join(__dirname, "..", "public")))
+
+app.use(express.static(publicDir, { index: false }))
+app.get("/legacy", (_req, res) => res.sendFile(path.join(publicDir, "index.html")))
+app.get("/kiosk", (_req, res) => res.sendFile(path.join(publicDir, "kiosk.html")))
+
+app.use(express.static(distDir))
+app.get("*", (req, res) => {
+	if (req.path.startsWith("/api")) return res.status(404).json({ error: "Не найдено" })
+	const index = path.join(distDir, "index.html")
+	if (fs.existsSync(index)) return res.sendFile(index)
+	res.status(503).send("Фронтенд не собран. Выполните: npm run build")
+})
 
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => console.log(`NochOtel запущен: http://localhost:${PORT}`))

@@ -28,7 +28,22 @@ function makeSelect(items, value) {
 	const menu = _el("div", { className: "sel-menu hidden" })
 	root.append(btn, menu)
 
-	const close = () => menu.classList.add("hidden")
+	function closeOnScroll() {
+		close()
+		_openMenu = null
+	}
+	function close() {
+		menu.classList.add("hidden")
+		window.removeEventListener("scroll", closeOnScroll, true)
+	}
+	function position() {
+		const r = btn.getBoundingClientRect()
+		menu.style.left = `${r.left}px`
+		menu.style.minWidth = `${r.width}px`
+		menu.style.top = `${r.bottom + 4}px`
+		const mh = menu.offsetHeight
+		if (r.bottom + 4 + mh > window.innerHeight && r.top - mh - 4 > 0) menu.style.top = `${r.top - mh - 4}px`
+	}
 	const render = () => {
 		const sel = data.find((i) => String(i.value) === String(current))
 		labelSpan.textContent = sel ? sel.label : data[0] ? data[0].label : ""
@@ -56,6 +71,8 @@ function makeSelect(items, value) {
 		if (_openMenu) _openMenu()
 		if (wasHidden) {
 			menu.classList.remove("hidden")
+			position()
+			window.addEventListener("scroll", closeOnScroll, true)
 			_openMenu = close
 		} else {
 			_openMenu = null
@@ -99,7 +116,21 @@ function makeDatePicker(value) {
 	const pop = _el("div", { className: "dp-pop hidden" })
 	root.append(btn, pop)
 
-	const close = () => pop.classList.add("hidden")
+	function closeOnScroll() {
+		close()
+		_openMenu = null
+	}
+	function close() {
+		pop.classList.add("hidden")
+		window.removeEventListener("scroll", closeOnScroll, true)
+	}
+	function position() {
+		const r = btn.getBoundingClientRect()
+		pop.style.left = `${Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)}px`
+		pop.style.top = `${r.bottom + 4}px`
+		const ph = pop.offsetHeight
+		if (r.bottom + 4 + ph > window.innerHeight && r.top - ph - 4 > 0) pop.style.top = `${r.top - ph - 4}px`
+	}
 	const showLabel = () => {
 		const d = new Date(`${current}T00:00:00`)
 		labelSpan.textContent = `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`
@@ -158,6 +189,8 @@ function makeDatePicker(value) {
 			view = new Date(`${current}T00:00:00`)
 			renderCal()
 			pop.classList.remove("hidden")
+			position()
+			window.addEventListener("scroll", closeOnScroll, true)
 			_openMenu = close
 		} else {
 			_openMenu = null

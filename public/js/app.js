@@ -328,8 +328,8 @@ async function renderJournal() {
 function printRegistrationBook() {
 	const hotelName = S.hotels.find((h) => String(h.id) === String($("#jr-hotel").value))?.name || "Все гостиницы"
 	const meta = [`Гостиница: ${hotelName}`, `Период: ${$("#jr-from").value} – ${$("#jr-to").value}`, `Записей: ${journalRows.length}`]
-	const rows = journalRows.map((r, i) => [i + 1, r.resident_name || "—", r.hotel_name, r.room_number, r.bed_label, r.date_from, r.date_to, r.status_name])
-	openPrint("Книга регистрации проживающих", meta, ["№", "ФИО", "Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус"], rows)
+	const rows = journalRows.map((r, i) => [i + 1, r.resident_name || "—", r.hotel_name, r.room_number, r.bed_label, r.date_from, r.date_to, r.status_name, stageInfo(r.stage).label])
+	openPrint("Книга регистрации проживающих", meta, ["№", "ФИО", "Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус", "Стадия"], rows)
 }
 
 function openPrint(title, metaLines, columns, rows) {
@@ -829,8 +829,8 @@ async function guestCard(id) {
 			Object.assign(el("button", { className: "btn" }, iconEl("book"), "Печать / PDF"), {
 				onclick: () => {
 					const meta = [`Таб. №: ${r.tab_number || "—"}`, `Организация: ${r.company || "—"}`, `Должность: ${r.position || "—"}`, `Телефон: ${r.phone || "—"}`]
-					const rows = data.stays.map((s) => [s.hotel_name, s.room_number, s.bed_label, s.date_from, s.date_to, s.status_name])
-					openPrint(`Карточка проживающего: ${r.full_name}`, meta, ["Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус"], rows)
+					const rows = data.stays.map((s) => [s.hotel_name, s.room_number, s.bed_label, s.date_from, s.date_to, s.status_name, stageInfo(s.stage).label])
+					openPrint(`Карточка проживающего: ${r.full_name}`, meta, ["Гостиница", "Номер", "Место", "Заезд", "Выезд", "Статус", "Стадия"], rows)
 				},
 			}),
 			el("button", { className: "btn btn-primary", textContent: "Закрыть", onclick: () => close() }),

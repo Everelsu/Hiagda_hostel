@@ -347,16 +347,13 @@ label {
 }
 .sel-menu,
 .dp-pop {
-	position: absolute;
-	top: calc(100% + 4px);
-	left: 0;
-	z-index: 60;
+	position: fixed;
+	z-index: 120;
 	background: var(--color-super-raised-bg);
 	border: 1px solid var(--color-button-border);
 	border-radius: var(--radius-md);
 	box-shadow: var(--shadow-floating);
 	padding: var(--gap-xs);
-	min-width: 100%;
 	max-height: 280px;
 	overflow: auto;
 }

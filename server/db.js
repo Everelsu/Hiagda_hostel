@@ -15,14 +15,20 @@ db.exec(`
 		username      TEXT NOT NULL UNIQUE,
 		password_hash TEXT NOT NULL,
 		full_name     TEXT,
-		role          TEXT NOT NULL CHECK (role IN ('admin','editor','viewer')),
+		role          TEXT NOT NULL CHECK (role IN ('admin','editor','viewer','resident')),
+		resident_id   INTEGER REFERENCES residents(id) ON DELETE SET NULL,
 		created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 	);
 
 	CREATE TABLE IF NOT EXISTS hotels (
-		id       INTEGER PRIMARY KEY AUTOINCREMENT,
-		name     TEXT NOT NULL,
-		location TEXT
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		name        TEXT NOT NULL,
+		location    TEXT,
+		settlement  TEXT,
+		address     TEXT,
+		phone       TEXT,
+		description TEXT,
+		rules       TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS room_classes (
@@ -60,7 +66,9 @@ db.exec(`
 		company    TEXT,
 		position   TEXT,
 		phone      TEXT,
-		note       TEXT
+		note       TEXT,
+		about      TEXT,
+		photo      TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS placements (
@@ -74,6 +82,34 @@ db.exec(`
 		date_to     TEXT NOT NULL,
 		comment     TEXT,
 		created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+
+	CREATE TABLE IF NOT EXISTS amenities (
+		id    INTEGER PRIMARY KEY AUTOINCREMENT,
+		name  TEXT NOT NULL UNIQUE,
+		icon  TEXT NOT NULL DEFAULT 'dot',
+		scope TEXT NOT NULL DEFAULT 'both' CHECK (scope IN ('room','hotel','both'))
+	);
+
+	CREATE TABLE IF NOT EXISTS room_amenities (
+		room_id    INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+		amenity_id INTEGER NOT NULL REFERENCES amenities(id) ON DELETE CASCADE,
+		PRIMARY KEY (room_id, amenity_id)
+	);
+
+	CREATE TABLE IF NOT EXISTS hotel_amenities (
+		hotel_id   INTEGER NOT NULL REFERENCES hotels(id) ON DELETE CASCADE,
+		amenity_id INTEGER NOT NULL REFERENCES amenities(id) ON DELETE CASCADE,
+		PRIMARY KEY (hotel_id, amenity_id)
+	);
+
+	CREATE TABLE IF NOT EXISTS places (
+		id       INTEGER PRIMARY KEY AUTOINCREMENT,
+		hotel_id INTEGER NOT NULL REFERENCES hotels(id) ON DELETE CASCADE,
+		name     TEXT NOT NULL,
+		kind     TEXT,
+		note     TEXT,
+		distance TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS audit_log (
@@ -91,19 +127,54 @@ db.exec(`
 	CREATE INDEX IF NOT EXISTS idx_beds_room ON beds(room_id);
 	CREATE INDEX IF NOT EXISTS idx_placements_bed ON placements(bed_id);
 	CREATE INDEX IF NOT EXISTS idx_placements_dates ON placements(date_from, date_to);
+	CREATE INDEX IF NOT EXISTS idx_placements_stage ON placements(stage);
 `)
 
-const placementCols = db.prepare("PRAGMA table_info(placements)").all()
-if (!placementCols.some((c) => c.name === "stage")) {
-	db.exec(
-		"ALTER TABLE placements ADD COLUMN stage TEXT NOT NULL DEFAULT 'expected' " +
-			"CHECK (stage IN ('expected','checked_in','checked_out','cancelled'))",
-	)
+const columns = (table) => db.prepare(`PRAGMA table_info(${table})`).all()
+const hasColumn = (table, name) => columns(table).some((c) => c.name === name)
+const addColumn = (table, name, def) => {
+	if (!hasColumn(table, name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`)
+}
+
+if (!hasColumn("placements", "stage")) {
+	addColumn("placements", "stage", "TEXT NOT NULL DEFAULT 'expected'")
 	db.prepare(
 		`UPDATE placements SET stage = 'checked_in'
 		 WHERE status_id IN (SELECT id FROM statuses WHERE name LIKE '%рожива%')`,
 	).run()
 }
-db.exec("CREATE INDEX IF NOT EXISTS idx_placements_stage ON placements(stage)")
+
+addColumn("hotels", "settlement", "TEXT")
+addColumn("hotels", "address", "TEXT")
+addColumn("hotels", "phone", "TEXT")
+addColumn("hotels", "description", "TEXT")
+addColumn("hotels", "rules", "TEXT")
+addColumn("residents", "about", "TEXT")
+addColumn("residents", "photo", "TEXT")
+
+if (!hasColumn("users", "resident_id")) {
+	const migrateUsers = db.transaction(() => {
+		db.exec(`
+			CREATE TABLE users_new (
+				id            INTEGER PRIMARY KEY AUTOINCREMENT,
+				username      TEXT NOT NULL UNIQUE,
+				password_hash TEXT NOT NULL,
+				full_name     TEXT,
+				role          TEXT NOT NULL CHECK (role IN ('admin','editor','viewer','resident')),
+				resident_id   INTEGER REFERENCES residents(id) ON DELETE SET NULL,
+				created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			INSERT INTO users_new (id, username, password_hash, full_name, role, created_at)
+				SELECT id, username, password_hash, full_name, role, created_at FROM users;
+			DROP TABLE users;
+			ALTER TABLE users_new RENAME TO users;
+		`)
+	})
+	db.pragma("foreign_keys = OFF")
+	migrateUsers()
+	db.pragma("foreign_keys = ON")
+}
+
+db.exec("CREATE INDEX IF NOT EXISTS idx_users_resident ON users(resident_id)")
 
 module.exports = db

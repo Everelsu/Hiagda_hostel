@@ -1,0 +1,212 @@
+* {
+	box-sizing: border-box;
+}
+html {
+	font-family: "Inter", system-ui, sans-serif;
+	font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+body {
+	margin: 0;
+	background: var(--color-bg);
+	color: var(--color-base);
+	font-size: var(--font-size-nm);
+	line-height: 1.5;
+}
+a {
+	color: var(--color-brand);
+	text-decoration: none;
+}
+h1,
+h2,
+h3,
+h4 {
+	color: var(--color-contrast);
+	margin: 0;
+}
+.muted {
+	color: var(--color-secondary);
+}
+.contrast {
+	color: var(--color-contrast);
+}
+
+/* Кнопки */
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--gap-sm);
+	padding: var(--gap-sm) var(--gap-lg);
+	border-radius: var(--radius-md);
+	border: 1px solid var(--color-button-border);
+	background: var(--color-button-bg);
+	color: var(--color-base);
+	font: inherit;
+	font-weight: var(--font-weight-bold);
+	font-size: var(--font-size-sm);
+	cursor: pointer;
+	transition: background-color 0.15s, border-color 0.15s, filter 0.15s, transform 0.07s;
+}
+.btn:hover {
+	filter: brightness(1.08);
+	border-color: var(--color-brand);
+}
+.btn:active {
+	transform: translateY(1px);
+}
+.btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+.btn-primary {
+	background: var(--color-green);
+	border-color: var(--color-green);
+	color: #04150b;
+}
+.btn-brand {
+	background: var(--color-brand-highlight);
+	border-color: var(--color-brand);
+	color: var(--color-brand);
+}
+.btn-ghost {
+	background: transparent;
+}
+.btn-danger {
+	background: transparent;
+	border-color: transparent;
+	color: var(--color-red);
+}
+.btn-sm {
+	padding: var(--gap-xs) var(--gap-sm);
+	font-size: var(--font-size-xs);
+}
+.btn-lg {
+	padding: var(--gap-md) var(--gap-xl);
+	font-size: var(--font-size-lg);
+}
+.btn-block {
+	width: 100%;
+}
+
+/* Поля ввода */
+input,
+textarea,
+select {
+	width: 100%;
+	padding: var(--gap-sm) var(--gap-md);
+	border-radius: var(--radius-md);
+	border: 1px solid var(--color-button-border);
+	background: var(--color-bg);
+	color: var(--color-contrast);
+	font: inherit;
+	font-size: var(--font-size-sm);
+}
+input:focus,
+textarea:focus,
+select:focus {
+	outline: none;
+	border-color: var(--color-brand);
+}
+label {
+	display: block;
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+	margin-bottom: var(--gap-xs);
+}
+.field {
+	margin-bottom: var(--gap-md);
+}
+
+/* Карточки */
+.card {
+	background: var(--color-raised-bg);
+	border: 1px solid var(--color-divider);
+	border-radius: var(--radius-lg);
+	padding: var(--gap-xl);
+	box-shadow: var(--shadow-card);
+}
+.card-pad-sm {
+	padding: var(--gap-lg);
+}
+.section-title {
+	font-size: var(--font-size-lg);
+	font-weight: var(--font-weight-bold);
+	color: var(--color-contrast);
+	margin-bottom: var(--gap-md);
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+}
+.grid {
+	display: grid;
+	gap: var(--gap-lg);
+}
+.row {
+	display: flex;
+	gap: var(--gap-md);
+	align-items: center;
+}
+.wrap {
+	flex-wrap: wrap;
+}
+.grow {
+	flex: 1;
+	min-width: 0;
+}
+.spread {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--gap-md);
+}
+
+/* Чипы / бейджи */
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--gap-xs);
+	padding: 3px var(--gap-sm);
+	border-radius: var(--radius-max);
+	font-size: var(--font-size-xs);
+	font-weight: var(--font-weight-bold);
+	background: var(--color-button-bg);
+	border: 1px solid var(--color-divider);
+}
+.chip .dot {
+	width: 8px;
+	height: 8px;
+	border-radius: var(--radius-max);
+}
+.brand-mark {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	font-weight: var(--font-weight-extrabold);
+	color: var(--color-contrast);
+}
+.brand-mark .dot {
+	width: 1rem;
+	height: 1rem;
+	border-radius: var(--radius-max);
+	background: var(--color-green);
+	box-shadow: 0 0 14px rgba(27, 217, 106, 0.45);
+}
+
+/* Тосты */
+.toasts {
+	position: fixed;
+	bottom: var(--gap-xl);
+	left: 50%;
+	transform: translateX(-50%);
+	display: grid;
+	gap: var(--gap-sm);
+	z-index: 200;
+}
+.toast {
+	background: var(--surface-4);
+	border: 1px solid var(--surface-5);
+	color: var(--color-contrast);
+	padding: var(--gap-md) var(--gap-xl);
+	border-radius: var(--radius-md);
+	box-shadow: var(--shadow-floating);
+}
