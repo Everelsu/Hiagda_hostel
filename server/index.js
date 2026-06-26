@@ -19,7 +19,30 @@ const STAGE_TRANSITIONS = {
 const canTransition = (from, to) => from === to || STAGE_TRANSITIONS[from]?.includes(to)
 const STAGE_LABELS = { expected: "Ожидается", checked_in: "Проживает", checked_out: "Выехал", cancelled: "Отменён" }
 const stageLabel = (stage) => STAGE_LABELS[stage] || STAGE_LABELS.expected
-const publicUser = (u) => ({ id: u.id, username: u.username, full_name: u.full_name, role: u.role, resident_id: u.resident_id ?? null })
+const publicUser = (u) => ({ id: u.id, username: u.username, full_name: u.full_name, role: u.role, resident_id: u.resident_id ?? null, must_change_password: !!u.must_change_password })
+const imagesFor = (ownerType, ownerId) =>
+	db.prepare("SELECT id, url FROM images WHERE owner_type = ? AND owner_id = ? ORDER BY sort, id").all(ownerType, ownerId)
+
+const TRANSLIT = { а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "c", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya" }
+const translit = (s) => (s || "").toLowerCase().split("").map((c) => (c in TRANSLIT ? TRANSLIT[c] : c)).join("").replace(/[^a-z0-9]/g, "")
+function genUsername(resident) {
+	let base = resident.tab_number ? translit(resident.tab_number) : ""
+	if (!base) {
+		const parts = (resident.full_name || "").trim().split(/\s+/)
+		base = translit(parts[0] || "user") + (parts[1] ? translit(parts[1]).slice(0, 1) : "")
+	}
+	base = (base || "user").slice(0, 16)
+	let u = base
+	let i = 1
+	while (db.prepare("SELECT 1 FROM users WHERE username = ?").get(u)) u = base + ++i
+	return u
+}
+function genPassword() {
+	const a = "abcdefghjkmnpqrstuvwxyz23456789"
+	let p = ""
+	for (let i = 0; i < 8; i++) p += a[Math.floor(Math.random() * a.length)]
+	return p
+}
 
 const app = express()
 app.use(cors())
@@ -53,40 +76,6 @@ api.post("/login", (req, res) => {
 		return res.status(401).json({ error: "Неверный логин или пароль" })
 	}
 	res.json({ token: sign(user), user: publicUser(user) })
-})
-
-api.get("/kiosk/lookup", (req, res) => {
-	const q = (req.query.q || "").trim()
-	if (q.length < 2) return res.json([])
-	const today = new Date().toISOString().slice(0, 10)
-	const people = db
-		.prepare("SELECT id, full_name, company, tab_number FROM residents WHERE full_name LIKE ? OR tab_number LIKE ? ORDER BY full_name LIMIT 8")
-		.all(`%${q}%`, `%${q}%`)
-	const plStmt = db.prepare(
-		`SELECT rm.id AS room_id, rm.number AS room_number, rm.floor, rm.hotel_id,
-			h.name AS hotel_name, b.label AS bed_label,
-			p.date_from, p.date_to, s.name AS status_name, s.color AS status_color,
-			CASE WHEN ? BETWEEN p.date_from AND p.date_to THEN 'now'
-			     WHEN p.date_from > ? THEN 'upcoming' ELSE 'past' END AS period
-		 FROM placements p
-		 JOIN beds b ON b.id = p.bed_id
-		 JOIN rooms rm ON rm.id = b.room_id
-		 JOIN hotels h ON h.id = rm.hotel_id
-		 JOIN statuses s ON s.id = p.status_id
-		 WHERE p.resident_id = ?
-		 ORDER BY
-			CASE WHEN ? BETWEEN p.date_from AND p.date_to THEN 0 WHEN p.date_from > ? THEN 1 ELSE 2 END,
-			CASE WHEN p.date_from > ? THEN julianday(p.date_from) ELSE -julianday(p.date_from) END
-		 LIMIT 1`,
-	)
-	const floorStmt = db.prepare("SELECT number FROM rooms WHERE hotel_id = ? AND IFNULL(floor,-999) = IFNULL(?,-999) ORDER BY number")
-	const result = people.map((person) => {
-		const placement = plStmt.get(today, today, person.id, today, today, today)
-		let floorRooms = []
-		if (placement) floorRooms = floorStmt.all(placement.hotel_id, placement.floor).map((r) => r.number)
-		return { id: person.id, full_name: person.full_name, company: person.company, placement: placement || null, floorRooms }
-	})
-	res.json(result)
 })
 
 api.use(authenticate)
@@ -138,7 +127,7 @@ api.post("/me/password", (req, res) => {
 	if (!user || !bcrypt.compareSync(current || "", user.password_hash)) {
 		return res.status(400).json({ error: "Текущий пароль неверный" })
 	}
-	db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(bcrypt.hashSync(next, 10), req.user.id)
+	db.prepare("UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?").run(bcrypt.hashSync(next, 10), req.user.id)
 	res.json({ ok: true })
 })
 
@@ -186,6 +175,7 @@ api.get("/me/overview", (req, res) => {
 			class_name: pl.class_name,
 			description: pl.room_description,
 			amenities: roomAmenities,
+			images: imagesFor("room", pl.room_id),
 		}
 		roommates = db
 			.prepare(
@@ -199,14 +189,39 @@ api.get("/me/overview", (req, res) => {
 				 ORDER BY r.full_name`,
 			)
 			.all(pl.room_id, rid, pl.date_to, pl.date_from)
-		const h = db.prepare("SELECT id, name, location, settlement, address, phone, description, rules FROM hotels WHERE id = ?").get(pl.hotel_id)
+		const h = db.prepare("SELECT * FROM hotels WHERE id = ?").get(pl.hotel_id)
 		const hotelAmenities = db
 			.prepare("SELECT a.name, a.icon FROM hotel_amenities ha JOIN amenities a ON a.id = ha.amenity_id WHERE ha.hotel_id = ? ORDER BY a.name")
 			.all(pl.hotel_id)
 		const places = db.prepare("SELECT id, name, kind, note, distance FROM places WHERE hotel_id = ? ORDER BY name").all(pl.hotel_id)
-		hotel = { ...h, amenities: hotelAmenities, places }
+		const rev = db.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE hotel_id = ?").get(pl.hotel_id)
+		hotel = {
+			...h,
+			amenities: hotelAmenities,
+			places,
+			images: imagesFor("hotel", pl.hotel_id),
+			rating: rev.avg ? Math.round(rev.avg * 10) / 10 : null,
+			reviews_count: rev.c,
+		}
 	}
-	res.json({ resident, placement: pl || null, room, roommates, hotel })
+	const myReview = pl ? db.prepare("SELECT id, rating, text FROM reviews WHERE hotel_id = ? AND resident_id = ?").get(pl.hotel_id, rid) : null
+	res.json({ resident, placement: pl || null, room, roommates, hotel, my_review: myReview || null })
+})
+
+api.post("/me/review", (req, res) => {
+	const rid = req.user.resident_id
+	if (!rid) return res.status(400).json({ error: "Профиль не привязан" })
+	const rating = Number(req.body?.rating)
+	if (!(rating >= 1 && rating <= 5)) return res.status(400).json({ error: "Оценка должна быть от 1 до 5" })
+	const pl = activePlacement(rid)
+	if (!pl) return res.status(400).json({ error: "Нет активного размещения" })
+	const text = req.body?.text || null
+	const tx = db.transaction(() => {
+		db.prepare("DELETE FROM reviews WHERE hotel_id = ? AND resident_id = ?").run(pl.hotel_id, rid)
+		db.prepare("INSERT INTO reviews (hotel_id, resident_id, rating, text) VALUES (?,?,?,?)").run(pl.hotel_id, rid, rating, text)
+	})
+	tx()
+	res.json({ ok: true })
 })
 
 api.put("/me/profile", (req, res) => {
@@ -389,6 +404,94 @@ api.get("/dashboard", (req, res) => {
 	})
 })
 
+api.get("/analytics", (req, res) => {
+	const today = new Date().toISOString().slice(0, 10)
+	const hotelFilter = req.query.hotel_id ? "AND rm.hotel_id = ?" : ""
+	const hArg = req.query.hotel_id ? [req.query.hotel_id] : []
+
+	const bedFilter = req.query.hotel_id ? "WHERE r.hotel_id = ?" : ""
+	const tBeds = db.prepare(`SELECT COUNT(*) c FROM beds b JOIN rooms r ON r.id = b.room_id ${bedFilter}`).get(...hArg).c
+	const tRooms = db.prepare(`SELECT COUNT(*) c FROM rooms r ${bedFilter}`).get(...hArg).c
+
+	const occStmt = db.prepare(
+		`SELECT COUNT(DISTINCT p.bed_id) c FROM placements p
+		 JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
+		 WHERE p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ? ${hotelFilter}`,
+	)
+	const occupancy = []
+	let bedNights = 0
+	for (let i = 0; i < 30; i++) {
+		const d = new Date(`${today}T00:00:00`)
+		d.setDate(d.getDate() + i)
+		const day = d.toISOString().slice(0, 10)
+		const occ = occStmt.get(day, day, ...hArg).c
+		occupancy.push({ date: day, occupied: occ, load: tBeds ? Math.round((occ / tBeds) * 100) : 0 })
+		bedNights += occ
+	}
+	const occToday = occupancy[0].occupied
+
+	const byHotel = db
+		.prepare("SELECT id, name FROM hotels ORDER BY name")
+		.all()
+		.filter((h) => !req.query.hotel_id || String(h.id) === String(req.query.hotel_id))
+		.map((h) => {
+			const beds = db.prepare("SELECT COUNT(*) c FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.hotel_id = ?").get(h.id).c
+			const occ = db
+				.prepare(
+					`SELECT COUNT(DISTINCT p.bed_id) c FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
+					 WHERE rm.hotel_id = ? AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ?`,
+				)
+				.get(h.id, today, today).c
+			return { name: h.name, beds, occupied: occ, load: beds ? Math.round((occ / beds) * 100) : 0 }
+		})
+
+	const stageRow = db
+		.prepare(
+			`SELECT
+				SUM(CASE WHEN p.stage='expected' THEN 1 ELSE 0 END) expected,
+				SUM(CASE WHEN p.stage='checked_in' THEN 1 ELSE 0 END) checked_in,
+				SUM(CASE WHEN p.stage='checked_out' THEN 1 ELSE 0 END) checked_out,
+				SUM(CASE WHEN p.stage='cancelled' THEN 1 ELSE 0 END) cancelled
+			 FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
+			 WHERE p.date_to >= ? ${hotelFilter}`,
+		)
+		.get(today, ...hArg)
+	const stages = { expected: stageRow.expected || 0, checked_in: stageRow.checked_in || 0, checked_out: stageRow.checked_out || 0, cancelled: stageRow.cancelled || 0 }
+
+	const byCompany = db
+		.prepare(
+			`SELECT COALESCE(NULLIF(r.company, ''), 'Без организации') company, COUNT(DISTINCT r.id) count
+			 FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id JOIN residents r ON r.id = p.resident_id
+			 WHERE p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ? ${hotelFilter}
+			 GROUP BY company ORDER BY count DESC LIMIT 8`,
+		)
+		.all(today, today, ...hArg)
+
+	const movesStmt = db.prepare(
+		`SELECT
+			(SELECT COUNT(*) FROM placements p JOIN beds b ON b.id=p.bed_id JOIN rooms rm ON rm.id=b.room_id WHERE p.stage<>'cancelled' AND p.date_from=? ${hotelFilter}) arrivals,
+			(SELECT COUNT(*) FROM placements p JOIN beds b ON b.id=p.bed_id JOIN rooms rm ON rm.id=b.room_id WHERE p.stage<>'cancelled' AND p.date_to=? ${hotelFilter}) departures`,
+	)
+	const movements = []
+	for (let i = 0; i < 14; i++) {
+		const d = new Date(`${today}T00:00:00`)
+		d.setDate(d.getDate() + i)
+		const day = d.toISOString().slice(0, 10)
+		const m = movesStmt.get(day, ...hArg, day, ...hArg)
+		movements.push({ date: day, arrivals: m.arrivals, departures: m.departures })
+	}
+
+	res.json({
+		date: today,
+		totals: { rooms: tRooms, beds: tBeds, occupied: occToday, free: tBeds - occToday, load: tBeds ? Math.round((occToday / tBeds) * 100) : 0, bedNights },
+		occupancy,
+		byHotel,
+		stages,
+		byCompany,
+		movements,
+	})
+})
+
 api.get("/plan", (req, res) => {
 	if (!req.query.hotel_id) return res.json({ date: null, rooms: [] })
 	const date = req.query.date || new Date().toISOString().slice(0, 10)
@@ -408,14 +511,18 @@ api.get("/plan", (req, res) => {
 		 LEFT JOIN residents r ON r.id = p.resident_id
 		 WHERE p.bed_id = ? AND p.date_from <= ? AND p.date_to >= ? LIMIT 1`,
 	)
+	const blockStmt = db.prepare(
+		"SELECT id, reason, date_from, date_to FROM room_blocks WHERE room_id = ? AND date_from <= ? AND date_to >= ? LIMIT 1",
+	)
 	for (const room of rooms) {
 		room.beds = bedStmt.all(room.id).map((b) => ({ ...b, placement: plStmt.get(b.id, date, date) || null }))
 		room.occupied = room.beds.filter((b) => b.placement).length
+		room.block = blockStmt.get(room.id, date, date) || null
 	}
 	res.json({ date, rooms })
 })
 
-const ROLES = ["admin", "editor", "viewer", "resident"]
+const ROLES = ["admin", "editor", "viewer"]
 api.get("/users", requireRole("admin"), (_req, res) => {
 	res.json(
 		db
@@ -428,12 +535,12 @@ api.get("/users", requireRole("admin"), (_req, res) => {
 })
 api.post("/users", requireRole("admin"), (req, res) => {
 	const { username, password, full_name, role } = req.body || {}
-	const resident_id = role === "resident" ? Number(req.body?.resident_id) || null : null
+	const resident_id = role === "viewer" ? Number(req.body?.resident_id) || null : null
 	if (!username || !password || !ROLES.includes(role)) {
 		return res.status(400).json({ error: "Заполните логин, пароль и роль" })
 	}
-	if (role === "resident" && !resident_id) {
-		return res.status(400).json({ error: "Для роли «вахтовик» выберите проживающего" })
+	if (role === "viewer" && !resident_id) {
+		return res.status(400).json({ error: "Для роли «Просмотр» выберите проживающего" })
 	}
 	try {
 		const info = db
@@ -459,9 +566,9 @@ api.put("/users/:id", requireRole("admin"), (req, res) => {
 	}
 	const nextRole = role || target.role
 	const resident_id =
-		nextRole === "resident" ? (req.body?.resident_id !== undefined ? Number(req.body.resident_id) || null : target.resident_id) : null
-	if (nextRole === "resident" && !resident_id) {
-		return res.status(400).json({ error: "Для роли «вахтовик» выберите проживающего" })
+		nextRole === "viewer" ? (req.body?.resident_id !== undefined ? Number(req.body.resident_id) || null : target.resident_id) : null
+	if (nextRole === "viewer" && !resident_id) {
+		return res.status(400).json({ error: "Для роли «Просмотр» выберите проживающего" })
 	}
 	db.prepare("UPDATE users SET full_name = ?, role = ?, resident_id = ? WHERE id = ?").run(
 		full_name ?? target.full_name,
@@ -486,7 +593,53 @@ api.delete("/users/:id", requireRole("admin"), (req, res) => {
 	res.json({ ok: true })
 })
 
-const HOTEL_FIELDS = ["name", "location", "settlement", "address", "phone", "description", "rules"]
+function issueAccount(resident) {
+	const existing = db.prepare("SELECT id, username FROM users WHERE resident_id = ?").get(resident.id)
+	const password = genPassword()
+	const hash = bcrypt.hashSync(password, 10)
+	if (existing) {
+		db.prepare("UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?").run(hash, existing.id)
+		return { username: existing.username, password, reset: true }
+	}
+	const username = genUsername(resident)
+	db.prepare("INSERT INTO users (username, password_hash, full_name, role, resident_id, must_change_password) VALUES (?,?,?,'viewer',?,1)").run(
+		username,
+		hash,
+		resident.full_name,
+		resident.id,
+	)
+	return { username, password, reset: false }
+}
+
+api.post("/residents/:id/account", requireRole("admin"), (req, res) => {
+	const resident = db.prepare("SELECT * FROM residents WHERE id = ?").get(req.params.id)
+	if (!resident) return res.status(404).json({ error: "Проживающий не найден" })
+	const cred = issueAccount(resident)
+	res.json({ full_name: resident.full_name, ...cred })
+})
+
+api.delete("/residents/:id/account", requireRole("admin"), (req, res) => {
+	db.prepare("DELETE FROM users WHERE resident_id = ? AND role = 'viewer'").run(req.params.id)
+	res.json({ ok: true })
+})
+
+api.post("/residents/accounts/bulk", requireRole("admin"), (req, res) => {
+	const without = db
+		.prepare(
+			`SELECT r.* FROM residents r
+			 WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.resident_id = r.id)
+			 ORDER BY r.full_name`,
+		)
+		.all()
+	const issued = []
+	const tx = db.transaction(() => {
+		for (const r of without) issued.push({ full_name: r.full_name, ...issueAccount(r) })
+	})
+	tx()
+	res.json({ issued })
+})
+
+const HOTEL_FIELDS = ["name", "location", "settlement", "address", "phone", "email", "check_in", "check_out", "latitude", "longitude", "description", "rules"]
 api.get("/hotels", (_req, res) => res.json(db.prepare("SELECT * FROM hotels ORDER BY name").all()))
 api.get("/hotels/:id", (req, res) => {
 	const hotel = db.prepare("SELECT * FROM hotels WHERE id = ?").get(req.params.id)
@@ -495,25 +648,33 @@ api.get("/hotels/:id", (req, res) => {
 		.prepare("SELECT a.* FROM hotel_amenities ha JOIN amenities a ON a.id = ha.amenity_id WHERE ha.hotel_id = ? ORDER BY a.name")
 		.all(hotel.id)
 	hotel.places = db.prepare("SELECT * FROM places WHERE hotel_id = ? ORDER BY name").all(hotel.id)
+	hotel.images = imagesFor("hotel", hotel.id)
+	const rev = db.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE hotel_id = ?").get(hotel.id)
+	hotel.reviews_count = rev.c
+	hotel.rating = rev.avg ? Math.round(rev.avg * 10) / 10 : null
 	res.json(hotel)
 })
 api.post("/hotels", requireRole("editor"), (req, res) => {
 	const b = req.body || {}
 	if (!b.name) return res.status(400).json({ error: "Укажите название" })
+	const cols = HOTEL_FIELDS.join(", ")
+	const ph = HOTEL_FIELDS.map(() => "?").join(", ")
 	const info = db
-		.prepare("INSERT INTO hotels (name, location, settlement, address, phone, description, rules) VALUES (?,?,?,?,?,?,?)")
-		.run(b.name, b.location || null, b.settlement || null, b.address || null, b.phone || null, b.description || null, b.rules || null)
+		.prepare(`INSERT INTO hotels (${cols}) VALUES (${ph})`)
+		.run(...HOTEL_FIELDS.map((f) => b[f] || null))
 	res.json({ id: info.lastInsertRowid })
 })
 api.put("/hotels/:id", requireRole("editor"), (req, res) => {
 	const b = req.body || {}
-	db.prepare(
-		"UPDATE hotels SET name=?, location=?, settlement=?, address=?, phone=?, description=?, rules=? WHERE id=?",
-	).run(b.name, b.location || null, b.settlement || null, b.address || null, b.phone || null, b.description || null, b.rules || null, req.params.id)
+	const set = HOTEL_FIELDS.map((f) => `${f}=?`).join(", ")
+	db.prepare(`UPDATE hotels SET ${set} WHERE id=?`).run(...HOTEL_FIELDS.map((f) => b[f] || null), req.params.id)
 	res.json({ ok: true })
 })
 api.delete("/hotels/:id", requireRole("admin"), (req, res) => {
-	db.prepare("DELETE FROM hotels WHERE id = ?").run(req.params.id)
+	const id = Number(req.params.id)
+	db.prepare("DELETE FROM images WHERE owner_type = 'hotel' AND owner_id = ?").run(id)
+	db.prepare("DELETE FROM images WHERE owner_type = 'room' AND owner_id IN (SELECT id FROM rooms WHERE hotel_id = ?)").run(id)
+	db.prepare("DELETE FROM hotels WHERE id = ?").run(id)
 	res.json({ ok: true })
 })
 
@@ -568,6 +729,35 @@ api.put("/rooms/:id/amenities", requireRole("editor"), (req, res) => {
 		for (const aid of ids) ins.run(req.params.id, aid)
 	})
 	tx()
+	res.json({ ok: true })
+})
+
+function addImage(ownerType, ownerId, url, res) {
+	if (!url || !/^https?:\/\//i.test(url)) return res.status(400).json({ error: "Укажите ссылку на изображение (http/https)" })
+	const sort = db.prepare("SELECT COALESCE(MAX(sort), 0) + 1 s FROM images WHERE owner_type = ? AND owner_id = ?").get(ownerType, ownerId).s
+	const info = db.prepare("INSERT INTO images (owner_type, owner_id, url, sort) VALUES (?,?,?,?)").run(ownerType, ownerId, url, sort)
+	res.json({ id: info.lastInsertRowid })
+}
+api.post("/hotels/:id/images", requireRole("editor"), (req, res) => addImage("hotel", Number(req.params.id), req.body?.url, res))
+api.post("/rooms/:id/images", requireRole("editor"), (req, res) => addImage("room", Number(req.params.id), req.body?.url, res))
+api.delete("/images/:id", requireRole("editor"), (req, res) => {
+	db.prepare("DELETE FROM images WHERE id = ?").run(req.params.id)
+	res.json({ ok: true })
+})
+
+api.get("/hotels/:id/reviews", (req, res) => {
+	const rev = db.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE hotel_id = ?").get(req.params.id)
+	const list = db
+		.prepare(
+			`SELECT rv.id, rv.rating, rv.text, rv.created_at, r.full_name AS resident_name
+			 FROM reviews rv LEFT JOIN residents r ON r.id = rv.resident_id
+			 WHERE rv.hotel_id = ? ORDER BY rv.created_at DESC LIMIT 50`,
+		)
+		.all(req.params.id)
+	res.json({ count: rev.c, average: rev.avg ? Math.round(rev.avg * 10) / 10 : null, reviews: list })
+})
+api.delete("/reviews/:id", requireRole("editor"), (req, res) => {
+	db.prepare("DELETE FROM reviews WHERE id = ?").run(req.params.id)
 	res.json({ ok: true })
 })
 
@@ -636,6 +826,7 @@ api.get("/rooms", (req, res) => {
 	for (const room of rooms) {
 		room.beds = bedsStmt.all(room.id)
 		room.amenity_ids = amenStmt.all(room.id).map((r) => r.amenity_id)
+		room.images = imagesFor("room", room.id)
 	}
 	res.json(rooms)
 })
@@ -678,7 +869,83 @@ api.put("/rooms/:id", requireRole("editor"), (req, res) => {
 })
 
 api.delete("/rooms/:id", requireRole("editor"), (req, res) => {
+	db.prepare("DELETE FROM images WHERE owner_type = 'room' AND owner_id = ?").run(Number(req.params.id))
 	db.prepare("DELETE FROM rooms WHERE id = ?").run(req.params.id)
+	res.json({ ok: true })
+})
+
+api.get("/availability", (req, res) => {
+	const { from, to } = req.query
+	if (!from || !to) return res.status(400).json({ error: "Укажите период" })
+	if (to < from) return res.status(400).json({ error: "Дата выезда раньше даты заезда" })
+	const filters = []
+	const args = []
+	if (req.query.hotel_id) {
+		filters.push("rm.hotel_id = ?")
+		args.push(req.query.hotel_id)
+	}
+	if (req.query.class_id) {
+		filters.push("rm.class_id = ?")
+		args.push(req.query.class_id)
+	}
+	const where = filters.length ? `AND ${filters.join(" AND ")}` : ""
+	const rows = db
+		.prepare(
+			`SELECT b.id AS bed_id, b.label AS bed_label,
+				rm.id AS room_id, rm.number, rm.floor, rm.capacity, rm.description,
+				c.name AS class_name, h.id AS hotel_id, h.name AS hotel_name
+			 FROM beds b
+			 JOIN rooms rm ON rm.id = b.room_id
+			 JOIN hotels h ON h.id = rm.hotel_id
+			 LEFT JOIN room_classes c ON c.id = rm.class_id
+			 WHERE NOT EXISTS (
+				SELECT 1 FROM placements p WHERE p.bed_id = b.id AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ?
+			 )
+			 AND NOT EXISTS (
+				SELECT 1 FROM room_blocks rb WHERE rb.room_id = rm.id AND rb.date_from <= ? AND rb.date_to >= ?
+			 )
+			 ${where}
+			 ORDER BY h.name, rm.floor, rm.number, b.id`,
+		)
+		.all(to, from, to, from, ...args)
+	const roomsMap = new Map()
+	for (const r of rows) {
+		if (!roomsMap.has(r.room_id))
+			roomsMap.set(r.room_id, {
+				room_id: r.room_id,
+				number: r.number,
+				floor: r.floor,
+				capacity: r.capacity,
+				class_name: r.class_name,
+				hotel_id: r.hotel_id,
+				hotel_name: r.hotel_name,
+				free_beds: [],
+			})
+		roomsMap.get(r.room_id).free_beds.push({ bed_id: r.bed_id, bed_label: r.bed_label })
+	}
+	const rooms = [...roomsMap.values()]
+	res.json({
+		from,
+		to,
+		totals: { free_beds: rows.length, rooms_with_space: rooms.length, fully_free_rooms: rooms.filter((r) => r.free_beds.length >= r.capacity).length },
+		rooms,
+	})
+})
+
+api.get("/rooms/:id/blocks", (req, res) =>
+	res.json(db.prepare("SELECT * FROM room_blocks WHERE room_id = ? ORDER BY date_from DESC").all(req.params.id)),
+)
+api.post("/rooms/:id/blocks", requireRole("editor"), (req, res) => {
+	const { date_from, date_to, reason } = req.body || {}
+	if (!date_from || !date_to) return res.status(400).json({ error: "Укажите период ремонта" })
+	if (date_to < date_from) return res.status(400).json({ error: "Дата окончания раньше начала" })
+	const info = db
+		.prepare("INSERT INTO room_blocks (room_id, date_from, date_to, reason) VALUES (?,?,?,?)")
+		.run(req.params.id, date_from, date_to, reason || null)
+	res.json({ id: info.lastInsertRowid })
+})
+api.delete("/blocks/:id", requireRole("editor"), (req, res) => {
+	db.prepare("DELETE FROM room_blocks WHERE id = ?").run(req.params.id)
 	res.json({ ok: true })
 })
 
@@ -686,7 +953,11 @@ api.get("/residents", (req, res) => {
 	const q = `%${req.query.q || ""}%`
 	res.json(
 		db
-			.prepare("SELECT * FROM residents WHERE full_name LIKE ? OR tab_number LIKE ? ORDER BY full_name")
+			.prepare(
+				`SELECT r.*, u.username AS account_username, u.must_change_password AS account_must_change
+				 FROM residents r LEFT JOIN users u ON u.resident_id = r.id AND u.role = 'viewer'
+				 WHERE r.full_name LIKE ? OR r.tab_number LIKE ? ORDER BY r.full_name`,
+			)
 			.all(q, q),
 	)
 })
@@ -966,7 +1237,6 @@ app.use("/api", api)
 
 app.use(express.static(publicDir, { index: false }))
 app.get("/legacy", (_req, res) => res.sendFile(path.join(publicDir, "index.html")))
-app.get("/kiosk", (_req, res) => res.sendFile(path.join(publicDir, "kiosk.html")))
 
 app.use(express.static(distDir))
 app.get("*", (req, res) => {

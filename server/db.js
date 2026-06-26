@@ -112,6 +112,33 @@ db.exec(`
 		distance TEXT
 	);
 
+	CREATE TABLE IF NOT EXISTS images (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		owner_type TEXT NOT NULL CHECK (owner_type IN ('hotel','room')),
+		owner_id   INTEGER NOT NULL,
+		url        TEXT NOT NULL,
+		sort       INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+
+	CREATE TABLE IF NOT EXISTS reviews (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		hotel_id    INTEGER NOT NULL REFERENCES hotels(id) ON DELETE CASCADE,
+		resident_id INTEGER REFERENCES residents(id) ON DELETE SET NULL,
+		rating      INTEGER NOT NULL,
+		text        TEXT,
+		created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+
+	CREATE TABLE IF NOT EXISTS room_blocks (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		room_id    INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+		date_from  TEXT NOT NULL,
+		date_to    TEXT NOT NULL,
+		reason     TEXT,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+
 	CREATE TABLE IF NOT EXISTS audit_log (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
 		user_id    INTEGER,
@@ -128,6 +155,10 @@ db.exec(`
 	CREATE INDEX IF NOT EXISTS idx_placements_bed ON placements(bed_id);
 	CREATE INDEX IF NOT EXISTS idx_placements_dates ON placements(date_from, date_to);
 	CREATE INDEX IF NOT EXISTS idx_placements_stage ON placements(stage);
+	CREATE INDEX IF NOT EXISTS idx_room_blocks_room ON room_blocks(room_id);
+	CREATE INDEX IF NOT EXISTS idx_room_blocks_dates ON room_blocks(date_from, date_to);
+	CREATE INDEX IF NOT EXISTS idx_images_owner ON images(owner_type, owner_id);
+	CREATE INDEX IF NOT EXISTS idx_reviews_hotel ON reviews(hotel_id);
 `)
 
 const columns = (table) => db.prepare(`PRAGMA table_info(${table})`).all()
@@ -149,6 +180,11 @@ addColumn("hotels", "address", "TEXT")
 addColumn("hotels", "phone", "TEXT")
 addColumn("hotels", "description", "TEXT")
 addColumn("hotels", "rules", "TEXT")
+addColumn("hotels", "email", "TEXT")
+addColumn("hotels", "check_in", "TEXT")
+addColumn("hotels", "check_out", "TEXT")
+addColumn("hotels", "latitude", "TEXT")
+addColumn("hotels", "longitude", "TEXT")
 addColumn("residents", "about", "TEXT")
 addColumn("residents", "photo", "TEXT")
 
@@ -175,6 +211,13 @@ if (!hasColumn("users", "resident_id")) {
 	db.pragma("foreign_keys = ON")
 }
 
+addColumn("users", "must_change_password", "INTEGER NOT NULL DEFAULT 0")
 db.exec("CREATE INDEX IF NOT EXISTS idx_users_resident ON users(resident_id)")
+try {
+	db.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_resident ON users(resident_id) WHERE resident_id IS NOT NULL")
+} catch {}
+
+// Роль 'resident' переименована в 'viewer' (конечный пользователь, портал /me)
+db.prepare("UPDATE users SET role = 'viewer' WHERE role = 'resident'").run()
 
 module.exports = db

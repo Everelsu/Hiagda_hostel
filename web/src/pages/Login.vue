@@ -69,9 +69,6 @@ async function submit() {
 			<button class="btn btn-primary btn-block btn-lg" type="submit" :disabled="busy">
 				{{ needsSetup ? "Создать и войти" : "Войти" }}
 			</button>
-			<p style="text-align: center; margin: 1rem 0 0">
-				<router-link to="/find">Я проживающий — найти свой номер</router-link>
-			</p>
 		</form>
 	</div>
 </template>

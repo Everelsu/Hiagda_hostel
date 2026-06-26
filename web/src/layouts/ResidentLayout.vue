@@ -2,6 +2,7 @@
 import { ref } from "vue"
 import { useRouter } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
+import Icon from "@/components/Icon.vue"
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -27,7 +28,7 @@ function logout() {
 				<router-link to="/me/profile" active-class="active">Профиль</router-link>
 			</nav>
 			<div class="row" style="gap: var(--gap-sm)">
-				<button class="btn btn-sm btn-ghost" @click="toggleTheme">{{ theme === "dark" ? "☾" : "☀" }}</button>
+				<button class="btn btn-sm btn-ghost" @click="toggleTheme"><Icon :name="theme === 'dark' ? 'moon' : 'sun'" /></button>
 				<button class="btn btn-sm" @click="logout">Выход</button>
 			</div>
 		</header>

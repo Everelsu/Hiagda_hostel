@@ -1,9 +1,11 @@
 <script setup>
 import { ref, onMounted, computed } from "vue"
-import { api } from "@/api/client"
+import { api, post, del } from "@/api/client"
+import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
 import Modal from "@/components/Modal.vue"
 import PlacementModal from "@/components/PlacementModal.vue"
+import Icon from "@/components/Icon.vue"
 
 const auth = useAuthStore()
 const canEdit = auth.can("editor")
@@ -13,6 +15,30 @@ const date = ref(new Date().toISOString().slice(0, 10))
 const rooms = ref([])
 const roomDetail = ref(null)
 const placement = ref(null)
+const blocks = ref([])
+const blockForm = ref({ date_from: "", date_to: "", reason: "" })
+
+async function openRoom(r) {
+	roomDetail.value = r
+	blockForm.value = { date_from: date.value, date_to: date.value, reason: "" }
+	blocks.value = canEdit ? await api(`/rooms/${r.id}/blocks`) : []
+}
+async function addBlock() {
+	try {
+		await post(`/rooms/${roomDetail.value.id}/blocks`, blockForm.value)
+		blocks.value = await api(`/rooms/${roomDetail.value.id}/blocks`)
+		blockForm.value = { date_from: date.value, date_to: date.value, reason: "" }
+		await load()
+		toast("Номер поставлен на ремонт")
+	} catch (e) {
+		toast(e.message)
+	}
+}
+async function removeBlock(b) {
+	await del("/blocks/" + b.id)
+	blocks.value = await api(`/rooms/${roomDetail.value.id}/blocks`)
+	await load()
+}
 
 onMounted(async () => {
 	hotels.value = await api("/hotels")
@@ -68,11 +94,11 @@ async function onSaved() {
 					v-for="r in list"
 					:key="r.id"
 					class="tile"
-					:class="tileClass(r)"
+					:class="[tileClass(r), { blocked: r.block }]"
 					:title="r.beds.map((b) => `${b.label}: ${b.placement ? b.placement.resident_name || b.placement.status_name : 'свободно'}`).join('\n')"
-					@click="roomDetail = r"
+					@click="openRoom(r)"
 				>
-					<div class="num">№ {{ r.number }}</div>
+					<div class="num">№ {{ r.number }} <Icon v-if="r.block" name="wrench" class="wrench" title="На ремонте" /></div>
 					<div class="sub">{{ r.class_name || "—" }} · {{ r.occupied }}/{{ r.capacity }}</div>
 					<div class="beds"><span v-for="b in r.beds" :key="b.id" class="bd" :style="{ background: b.placement ? b.placement.status_color : 'transparent' }" /></div>
 				</button>
@@ -81,6 +107,7 @@ async function onSaved() {
 
 		<Modal v-if="roomDetail" :title="'Номер № ' + roomDetail.number" @close="roomDetail = null">
 			<p class="muted" style="margin: 0">Занято {{ roomDetail.occupied }} из {{ roomDetail.capacity }} · {{ date }}</p>
+			<div v-if="roomDetail.block" class="block-note"><Icon name="wrench" /> На ремонте: {{ roomDetail.block.date_from }} – {{ roomDetail.block.date_to }}<template v-if="roomDetail.block.reason"> · {{ roomDetail.block.reason }}</template></div>
 			<div class="grid" style="gap: var(--gap-sm)">
 				<button v-for="b in roomDetail.beds" :key="b.id" class="bedrow" @click="openBed(b)">
 					<span class="dot" :style="{ background: b.placement ? b.placement.status_color : 'var(--color-gray)' }" />
@@ -89,9 +116,23 @@ async function onSaved() {
 						<template v-if="b.placement">{{ b.placement.resident_name || b.placement.status_name }} <span class="muted">({{ b.placement.date_from }} – {{ b.placement.date_to }})</span></template>
 						<template v-else><span class="muted">свободно</span></template>
 					</span>
-					<span v-if="canEdit" class="muted">✎</span>
+					<Icon v-if="canEdit" name="pencil" class="muted" />
 				</button>
 			</div>
+
+			<template v-if="canEdit">
+				<div class="section-title" style="font-size: var(--font-size-nm); margin-top: var(--gap-md)">Ремонт / блокировка</div>
+				<div v-for="b in blocks" :key="b.id" class="bedrow">
+					<span class="grow"><Icon name="wrench" /> {{ b.date_from }} – {{ b.date_to }}<template v-if="b.reason"> · {{ b.reason }}</template></span>
+					<button class="btn btn-sm btn-danger" @click="removeBlock(b)"><Icon name="x" /></button>
+				</div>
+				<div class="row wrap" style="margin-top: var(--gap-sm)">
+					<input v-model="blockForm.date_from" type="date" style="width: auto" />
+					<input v-model="blockForm.date_to" type="date" style="width: auto" />
+					<input v-model="blockForm.reason" placeholder="Причина" style="min-width: 120px" />
+					<button class="btn btn-sm" @click="addBlock">На ремонт</button>
+				</div>
+			</template>
 		</Modal>
 
 		<PlacementModal v-if="placement" :bed="placement.bed" :existing="placement.existing" :date="date" @saved="onSaved" @close="placement = null" />
@@ -123,6 +164,17 @@ async function onSaved() {
 }
 .tile.full {
 	border-left-color: var(--color-red);
+}
+.tile.blocked {
+	border-left-color: var(--color-orange);
+	opacity: 0.85;
+}
+.block-note {
+	background: var(--color-red-bg);
+	border: 1px solid var(--color-orange);
+	border-radius: var(--radius-md);
+	padding: var(--gap-sm) var(--gap-md);
+	font-size: var(--font-size-sm);
 }
 .tile:hover {
 	border-color: var(--color-brand);

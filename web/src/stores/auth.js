@@ -1,7 +1,8 @@
 import { defineStore } from "pinia"
 import { post, setToken } from "@/api/client"
 
-const RANK = { viewer: 1, editor: 2, admin: 3 }
+// Персонал. viewer — это конечный пользователь (вахтовик), не персонал.
+const STAFF_RANK = { editor: 1, admin: 2 }
 
 export const useAuthStore = defineStore("auth", {
 	state: () => ({
@@ -9,10 +10,10 @@ export const useAuthStore = defineStore("auth", {
 	}),
 	getters: {
 		isAuthed: (s) => !!s.user,
-		isStaff: (s) => !!RANK[s.user?.role],
-		isResident: (s) => s.user?.role === "resident",
-		can: (s) => (role) => (RANK[s.user?.role] || 0) >= RANK[role],
-		homeRoute: (s) => (s.user?.role === "resident" ? "/me" : RANK[s.user?.role] ? "/app" : "/login"),
+		isStaff: (s) => !!STAFF_RANK[s.user?.role],
+		isUser: (s) => s.user?.role === "viewer",
+		can: (s) => (role) => (STAFF_RANK[s.user?.role] || 0) >= STAFF_RANK[role],
+		homeRoute: (s) => (s.user?.role === "viewer" ? "/me" : STAFF_RANK[s.user?.role] ? "/app" : "/login"),
 	},
 	actions: {
 		async login(username, password) {

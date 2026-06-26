@@ -1,24 +1,28 @@
-export const amenityEmoji = {
-	wifi: "📶",
-	tv: "📺",
-	shower: "🚿",
-	fridge: "🧊",
-	snow: "❄️",
-	utensils: "🍽️",
-	washer: "🧺",
-	wind: "🌬️",
-	dumbbell: "🏋️",
-	sofa: "🛋️",
-	dot: "•",
+// Сопоставление названий удобств/мест с именами иконок (Icon.vue)
+export const amenityIconMap = {
+	wifi: "wifi",
+	tv: "tv",
+	shower: "droplet",
+	fridge: "refrigerator",
+	snow: "snowflake",
+	utensils: "utensils",
+	washer: "washing-machine",
+	wind: "wind",
+	dumbbell: "dumbbell",
+	sofa: "armchair",
+	dot: "dot",
 }
 
-export const placeEmoji = {
-	Питание: "🍽️",
-	Магазин: "🛒",
-	Медицина: "⚕️",
-	default: "📍",
+export const placeIconMap = {
+	Питание: "utensils",
+	Магазин: "tag",
+	Медицина: "plus",
+	default: "map-pin",
 }
 
 export function amenityIcon(name) {
-	return amenityEmoji[name] || amenityEmoji.dot
+	return amenityIconMap[name] || "dot"
+}
+export function placeIcon(kind) {
+	return placeIconMap[kind] || placeIconMap.default
 }

@@ -98,10 +98,10 @@ const tx = db.transaction(() => {
 			"vahta",
 			bcrypt.hashSync("vahta", 10),
 			"Иванов Иван Петрович",
-			"resident",
+			"viewer",
 			proResId,
 		)
-		console.log("Создан демо-вахтовик: логин vahta / пароль vahta")
+		console.log("Создан демо-пользователь (Просмотр): логин vahta / пароль vahta")
 	}
 })
 

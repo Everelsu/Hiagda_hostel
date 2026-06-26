@@ -8,6 +8,7 @@ const props = defineProps({
 	bed: { type: Object, required: true },
 	existing: { type: Object, default: null },
 	date: { type: String, required: true },
+	dateTo: { type: String, default: null },
 })
 const emit = defineEmits(["saved", "close"])
 
@@ -21,7 +22,7 @@ const suggestions = ref([])
 const statusId = ref(props.existing?.status_id || null)
 const stage = ref(props.existing?.stage || "expected")
 const dateFrom = ref(props.existing?.date_from || props.date)
-const dateTo = ref(props.existing?.date_to || props.date)
+const dateTo = ref(props.existing?.date_to || props.dateTo || props.date)
 const comment = ref(props.existing?.comment || "")
 
 const stageOptions = computed(() => (props.existing ? [stage.value, ...(STAGE_NEXT[props.existing.stage] || [])] : ["expected", "checked_in"]))

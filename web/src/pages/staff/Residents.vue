@@ -4,6 +4,7 @@ import { api, post, put, del } from "@/api/client"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
 import Modal from "@/components/Modal.vue"
+import Icon from "@/components/Icon.vue"
 
 const auth = useAuthStore()
 const canEdit = auth.can("editor")
@@ -69,9 +70,9 @@ const stageLabel = { expected: "Ожидается", checked_in: "Прожива
 					<div class="contrast" style="font-weight: 700">{{ r.full_name }}</div>
 					<div class="muted" style="font-size: var(--font-size-sm)">{{ [r.company, r.position, r.tab_number].filter(Boolean).join(" · ") || "—" }}</div>
 				</button>
-				<button class="btn btn-sm" @click="report(r)">⭳</button>
-				<button v-if="canEdit" class="btn btn-sm" @click="openEdit(r)">✎</button>
-				<button v-if="canEdit" class="btn btn-sm btn-danger" @click="remove(r)">✕</button>
+				<button class="btn btn-sm" title="Отчёт" @click="report(r)"><Icon name="download" /></button>
+				<button v-if="canEdit" class="btn btn-sm" title="Изменить" @click="openEdit(r)"><Icon name="pencil" /></button>
+				<button v-if="canEdit" class="btn btn-sm btn-danger" title="Удалить" @click="remove(r)"><Icon name="trash" /></button>
 			</div>
 		</div>
 
@@ -111,7 +112,7 @@ const stageLabel = { expected: "Ожидается", checked_in: "Прожива
 				</table>
 			</div>
 			<template #foot>
-				<button class="btn" @click="report(card.resident)">⭳ Excel</button>
+				<button class="btn" @click="report(card.resident)"><Icon name="download" /> Excel</button>
 				<button class="btn btn-primary" @click="card = null">Закрыть</button>
 			</template>
 		</Modal>

@@ -2,6 +2,7 @@
 import { ref } from "vue"
 import { useRouter } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
+import Icon from "@/components/Icon.vue"
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -25,22 +26,26 @@ function logout() {
 			<div class="brand-mark" style="padding: var(--gap-sm) var(--gap-sm) var(--gap-lg)"><span class="dot" /> NochOtel</div>
 			<nav class="nav">
 				<div class="heading">Основное</div>
-				<router-link to="/app/dashboard" active-class="active">📊 Главная</router-link>
-				<router-link to="/app/plan" active-class="active">🗺 План этажа</router-link>
+				<router-link to="/app/dashboard" active-class="active"><Icon name="gauge" /> Главная</router-link>
+				<router-link to="/app/rack" active-class="active"><Icon name="calendar" /> Бронирование</router-link>
+				<router-link to="/app/analytics" active-class="active"><Icon name="bar-chart" /> Аналитика</router-link>
+				<router-link to="/app/availability" active-class="active"><Icon name="search" /> Свободные места</router-link>
+				<router-link to="/app/plan" active-class="active"><Icon name="layout" /> План этажа</router-link>
 				<div class="heading">Номерной фонд</div>
-				<router-link to="/app/rooms" active-class="active">🏠 Гостиницы и номера</router-link>
-				<router-link to="/app/residents" active-class="active">🧑‍🤝‍🧑 Проживающие</router-link>
-				<router-link v-if="auth.can('admin')" to="/app/users" active-class="active">👥 Пользователи</router-link>
-				<div class="heading">Ещё</div>
-				<a href="/legacy" target="_blank" rel="noopener">🛏 Шахматка · журнал · отчёты</a>
+				<router-link to="/app/rooms" active-class="active"><Icon name="home" /> Гостиницы и номера</router-link>
+				<router-link to="/app/residents" active-class="active"><Icon name="users" /> Проживающие</router-link>
+				<router-link to="/app/movements" active-class="active"><Icon name="key" /> Заезды / выезды</router-link>
+				<router-link to="/app/journal" active-class="active"><Icon name="book" /> Журнал размещений</router-link>
+				<router-link v-if="auth.can('admin')" to="/app/users" active-class="active"><Icon name="user-cog" /> Пользователи</router-link>
+				<router-link v-if="auth.can('admin')" to="/app/audit" active-class="active"><Icon name="info" /> Журнал действий</router-link>
 			</nav>
 			<div class="sidebar-foot">
-				<button class="navbtn" @click="toggleTheme">{{ theme === "dark" ? "☾ Тёмная тема" : "☀ Светлая тема" }}</button>
+				<button class="navbtn" @click="toggleTheme"><Icon :name="theme === 'dark' ? 'moon' : 'sun'" /> {{ theme === "dark" ? "Тёмная тема" : "Светлая тема" }}</button>
 				<div class="user-box">
 					<div class="contrast" style="font-weight: 700">{{ auth.user?.full_name || auth.user?.username }}</div>
 					<div class="muted" style="font-size: var(--font-size-xs)">{{ ROLE_LABEL[auth.user?.role] }}</div>
 				</div>
-				<button class="navbtn" @click="logout">⎋ Выход</button>
+				<button class="navbtn" @click="logout"><Icon name="log-out" /> Выход</button>
 			</div>
 		</aside>
 		<main class="content">
@@ -77,7 +82,9 @@ function logout() {
 }
 .nav a,
 .navbtn {
-	display: block;
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
 	text-align: left;
 	padding: var(--gap-sm) var(--gap-md);
 	border-radius: var(--radius-md);

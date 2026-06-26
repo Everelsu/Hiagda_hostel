@@ -5,16 +5,15 @@ import { toast } from "@/toast"
 
 const users = ref([])
 const residents = ref([])
-const ROLE_LABEL = { admin: "Администратор", editor: "Редактор", viewer: "Просмотр", resident: "Вахтовик" }
+const ROLE_LABEL = { admin: "Администратор", editor: "Редактор", viewer: "Просмотр (пользователь)" }
 const ROLES = [
-	["viewer", "Просмотр"],
-	["editor", "Редактор"],
+	["viewer", "Просмотр — пользователь (вахтовик)"],
+	["editor", "Редактор — персонал"],
 	["admin", "Администратор"],
-	["resident", "Вахтовик"],
 ]
 
-const form = ref({ username: "", password: "", full_name: "", role: "viewer", resident_id: "" })
-const isResident = computed(() => form.value.role === "resident")
+const form = ref({ username: "", password: "", full_name: "", role: "editor", resident_id: "" })
+const isResident = computed(() => form.value.role === "viewer")
 
 async function load() {
 	users.value = await api("/users")
@@ -81,7 +80,7 @@ async function resetPassword(u) {
 				</div>
 			</div>
 			<div v-if="isResident" class="field">
-				<label>Проживающий (привязка профиля вахтовика)</label>
+				<label>Проживающий (чей профиль увидит пользователь)</label>
 				<select v-model="form.resident_id">
 					<option value="">— выберите —</option>
 					<option v-for="r in residents" :key="r.id" :value="r.id">
@@ -89,7 +88,7 @@ async function resetPassword(u) {
 					</option>
 				</select>
 				<p class="muted" style="font-size: var(--font-size-xs); margin-top: 4px">
-					Вахтовик войдёт под этим логином и увидит своё размещение, соседей и удобства.
+					Пользователь войдёт под этим логином и увидит своё размещение, соседей, удобства и сможет оставить отзыв.
 				</p>
 			</div>
 			<button class="btn btn-primary" @click="create">Создать</button>

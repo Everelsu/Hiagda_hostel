@@ -1,7 +1,8 @@
 const jwt = require("jsonwebtoken")
 
 const SECRET = process.env.JWT_SECRET || "nochotel-dev-secret-change-me"
-const ROLE_RANK = { viewer: 1, editor: 2, admin: 3 }
+// Иерархия прав персонала. viewer — это конечный пользователь (вахтовик), он НЕ персонал.
+const ROLE_RANK = { editor: 1, admin: 2 }
 
 function sign(user) {
 	return jwt.sign(
