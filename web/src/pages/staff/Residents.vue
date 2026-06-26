@@ -8,10 +8,12 @@ import Icon from "@/components/Icon.vue"
 
 const auth = useAuthStore()
 const canEdit = auth.can("editor")
+const canAdmin = auth.can("admin")
 const q = ref("")
 const list = ref([])
 const edit = ref(null)
 const card = ref(null)
+const creds = ref(null)
 
 let timer
 function onSearch() {
@@ -53,12 +55,64 @@ async function openCard(r) {
 function report(r) {
 	window.open("/api/report/resident/" + r.id, "_blank")
 }
+
+async function issueAccount(r, reset = false) {
+	if (reset && !confirm(`Сбросить пароль для «${r.full_name}»? Старый перестанет работать.`)) return
+	try {
+		const c = await post(`/residents/${r.id}/account`, {})
+		creds.value = { title: reset ? "Новый пароль выдан" : "Доступ выдан", list: [c] }
+		load()
+	} catch (e) {
+		toast(e.message)
+	}
+}
+async function revokeAccount(r) {
+	if (!confirm(`Убрать доступ у «${r.full_name}»? Учётная запись будет удалена.`)) return
+	await del(`/residents/${r.id}/account`)
+	load()
+	toast("Доступ убран")
+}
+async function bulkIssue() {
+	if (!confirm("Выдать доступ всем проживающим без учётной записи?")) return
+	try {
+		const r = await post("/residents/accounts/bulk", {})
+		if (!r.issued.length) return toast("Все уже с доступом")
+		creds.value = { title: `Выдано доступов: ${r.issued.length}`, list: r.issued }
+		load()
+	} catch (e) {
+		toast(e.message)
+	}
+}
+function copyCreds() {
+	const text = creds.value.list.map((c) => `${c.full_name}\tлогин: ${c.username}\tпароль: ${c.password}`).join("\n")
+	navigator.clipboard?.writeText(text).then(() => toast("Скопировано"))
+}
+function printCreds() {
+	const rows = creds.value.list
+		.map(
+			(c) =>
+				`<div class="slip"><div class="n">${c.full_name}</div><div>Сайт: вход для проживающих</div><div>Логин: <b>${c.username}</b></div><div>Пароль: <b>${c.password}</b></div><div class="hint">Смените пароль при первом входе.</div></div>`,
+		)
+		.join("")
+	const w = window.open("", "_blank")
+	w.document.write(
+		`<html><head><title>Реквизиты доступа</title><style>body{font-family:sans-serif;padding:20px}.slip{border:1px dashed #888;border-radius:8px;padding:14px 18px;margin:0 0 12px;max-width:360px}.n{font-weight:700;font-size:18px;margin-bottom:6px}.hint{color:#888;font-size:12px;margin-top:6px}b{font-size:16px}@media print{.slip{page-break-inside:avoid}}</style></head><body><h2>Реквизиты доступа · NochOtel</h2>${rows}<script>window.print()<\/script></body></html>`,
+	)
+	w.document.close()
+}
+
 const stageLabel = { expected: "Ожидается", checked_in: "Проживает", checked_out: "Выехал", cancelled: "Отменён" }
 </script>
 
 <template>
 	<div class="grid" style="max-width: 820px">
-		<div class="spread"><h1>Проживающие</h1><button v-if="canEdit" class="btn btn-primary btn-sm" @click="add">+ Добавить</button></div>
+		<div class="spread">
+			<h1>Проживающие</h1>
+			<div class="row" style="gap: var(--gap-sm)">
+				<button v-if="canAdmin" class="btn btn-sm" @click="bulkIssue"><Icon name="key" /> Выдать доступ всем</button>
+				<button v-if="canEdit" class="btn btn-primary btn-sm" @click="add">+ Добавить</button>
+			</div>
+		</div>
 
 		<input v-model="q" placeholder="Поиск по ФИО / табельному №" @input="onSearch" />
 
@@ -69,7 +123,19 @@ const stageLabel = { expected: "Ожидается", checked_in: "Прожива
 				<button class="grow link" @click="openCard(r)">
 					<div class="contrast" style="font-weight: 700">{{ r.full_name }}</div>
 					<div class="muted" style="font-size: var(--font-size-sm)">{{ [r.company, r.position, r.tab_number].filter(Boolean).join(" · ") || "—" }}</div>
+					<div class="acc" :class="{ has: r.account_username }">
+						<Icon name="key" size="0.85rem" />
+						<template v-if="r.account_username">логин: {{ r.account_username }}<span v-if="r.account_must_change"> · пароль не сменён</span></template>
+						<template v-else>нет доступа</template>
+					</div>
 				</button>
+				<template v-if="canAdmin">
+					<button v-if="!r.account_username" class="btn btn-sm" title="Выдать доступ" @click="issueAccount(r)"><Icon name="key" /></button>
+					<template v-else>
+						<button class="btn btn-sm" title="Сбросить пароль" @click="issueAccount(r, true)"><Icon name="rotate-cw" /></button>
+						<button class="btn btn-sm btn-danger" title="Убрать доступ" @click="revokeAccount(r)"><Icon name="log-out" /></button>
+					</template>
+				</template>
 				<button class="btn btn-sm" title="Отчёт" @click="report(r)"><Icon name="download" /></button>
 				<button v-if="canEdit" class="btn btn-sm" title="Изменить" @click="openEdit(r)"><Icon name="pencil" /></button>
 				<button v-if="canEdit" class="btn btn-sm btn-danger" title="Удалить" @click="remove(r)"><Icon name="trash" /></button>
