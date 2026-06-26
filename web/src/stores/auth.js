@@ -26,6 +26,12 @@ export const useAuthStore = defineStore("auth", {
 			this.user = r.user
 			localStorage.setItem("noch_user", JSON.stringify(r.user))
 		},
+		markPasswordChanged() {
+			if (this.user) {
+				this.user = { ...this.user, must_change_password: false }
+				localStorage.setItem("noch_user", JSON.stringify(this.user))
+			}
+		},
 		logout() {
 			setToken(null)
 			localStorage.removeItem("noch_user")

@@ -182,6 +182,25 @@ const stageLabel = { expected: "Ожидается", checked_in: "Прожива
 				<button class="btn btn-primary" @click="card = null">Закрыть</button>
 			</template>
 		</Modal>
+
+		<Modal v-if="creds" :title="creds.title" @close="creds = null">
+			<p class="muted" style="margin: 0">Запишите или распечатайте — пароль показывается один раз. Пользователь сменит его при первом входе.</p>
+			<div class="table-scroll">
+				<table class="dt">
+					<thead><tr><th>Проживающий</th><th>Логин</th><th>Пароль</th></tr></thead>
+					<tbody>
+						<tr v-for="c in creds.list" :key="c.username">
+							<td>{{ c.full_name }}</td><td><b>{{ c.username }}</b></td><td><b>{{ c.password }}</b></td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<template #foot>
+				<button class="btn" @click="copyCreds"><Icon name="book" /> Копировать</button>
+				<button class="btn" @click="printCreds"><Icon name="book" /> Печать листков</button>
+				<button class="btn btn-primary" @click="creds = null">Готово</button>
+			</template>
+		</Modal>
 	</div>
 </template>
 
@@ -212,6 +231,17 @@ const stageLabel = { expected: "Ожидается", checked_in: "Прожива
 	border: none;
 	cursor: pointer;
 	padding: 0;
+}
+.acc {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+	margin-top: 2px;
+}
+.acc.has {
+	color: var(--color-green);
 }
 .table-scroll {
 	overflow-x: auto;

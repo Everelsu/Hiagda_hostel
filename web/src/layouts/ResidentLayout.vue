@@ -2,11 +2,17 @@
 import { ref } from "vue"
 import { useRouter } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
+import { post } from "@/api/client"
+import { toast } from "@/toast"
 import Icon from "@/components/Icon.vue"
+import Modal from "@/components/Modal.vue"
 
 const router = useRouter()
 const auth = useAuthStore()
 const theme = ref(document.documentElement.getAttribute("data-theme") || "dark")
+const curPass = ref("")
+const newPass = ref("")
+const busy = ref(false)
 
 function toggleTheme() {
 	theme.value = theme.value === "dark" ? "light" : "dark"
@@ -16,6 +22,20 @@ function toggleTheme() {
 function logout() {
 	auth.logout()
 	router.push({ name: "login" })
+}
+async function changePassword() {
+	if (newPass.value.length < 4) return toast("Пароль слишком короткий (мин. 4)")
+	busy.value = true
+	try {
+		await post("/me/password", { current: curPass.value, next: newPass.value })
+		auth.markPasswordChanged()
+		curPass.value = newPass.value = ""
+		toast("Пароль изменён")
+	} catch (e) {
+		toast(e.message)
+	} finally {
+		busy.value = false
+	}
 }
 </script>
 
@@ -35,6 +55,16 @@ function logout() {
 		<main class="res-main">
 			<router-view />
 		</main>
+
+		<Modal v-if="auth.user?.must_change_password" title="Смените пароль для первого входа">
+			<p class="muted" style="margin: 0">Для безопасности задайте свой пароль вместо выданного.</p>
+			<div class="field"><label>Текущий (выданный) пароль</label><input v-model="curPass" type="password" /></div>
+			<div class="field"><label>Новый пароль</label><input v-model="newPass" type="password" /></div>
+			<template #foot>
+				<button class="btn" @click="logout">Выйти</button>
+				<button class="btn btn-primary" :disabled="busy" @click="changePassword">Сохранить и войти</button>
+			</template>
+		</Modal>
 	</div>
 </template>
 
