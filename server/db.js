@@ -139,6 +139,17 @@ db.exec(`
 		created_at TEXT NOT NULL DEFAULT (datetime('now'))
 	);
 
+	CREATE TABLE IF NOT EXISTS room_issues (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		room_id      INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+		user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		amenity_name TEXT NOT NULL,
+		comment      TEXT NOT NULL,
+		status       TEXT NOT NULL DEFAULT 'Новая' 
+			CHECK (status IN ('Новая', 'В работе', 'Починено')),
+		created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+
 	CREATE TABLE IF NOT EXISTS audit_log (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
 		user_id    INTEGER,
@@ -159,7 +170,9 @@ db.exec(`
 	CREATE INDEX IF NOT EXISTS idx_room_blocks_dates ON room_blocks(date_from, date_to);
 	CREATE INDEX IF NOT EXISTS idx_images_owner ON images(owner_type, owner_id);
 	CREATE INDEX IF NOT EXISTS idx_reviews_hotel ON reviews(hotel_id);
-`)
+	CREATE INDEX IF NOT EXISTS idx_room_issues_lookup ON room_issues(room_id, status);
+`);
+
 
 const columns = (table) => db.prepare(`PRAGMA table_info(${table})`).all()
 const hasColumn = (table, name) => columns(table).some((c) => c.name === name)

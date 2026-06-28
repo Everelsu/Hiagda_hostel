@@ -18,11 +18,43 @@ const placement = ref(null)
 const blocks = ref([])
 const blockForm = ref({ date_from: "", date_to: "", reason: "" })
 
+const roomIssues = ref([])
+
+const activeIssues = computed(() => {
+	if (!roomIssues.value) return []
+	return roomIssues.value.filter(x => x.status !== 'Починено')
+})
+
 async function openRoom(r) {
 	roomDetail.value = r
 	blockForm.value = { date_from: date.value, date_to: date.value, reason: "" }
 	blocks.value = canEdit ? await api(`/rooms/${r.id}/blocks`) : []
+	try {
+		roomIssues.value = await api(`/rooms/${r.id}/issues`)
+	} catch (e) {
+		roomIssues.value = []
+	}
 }
+
+async function updateIssueStatus(issue, newStatus) {
+	try {
+		await api(`/issues/${issue.id}/status`, {
+			method: "PUT",
+			body: JSON.stringify({ status: newStatus })
+		})
+		roomIssues.value = await api(`/rooms/${roomDetail.value.id}/issues`)
+		await load()
+
+		// ДОБАВЛЕНО: Принудительно уменьшаем счётчик в меню или запрашиваем актуальный с сервера
+		const res = await api("/me/issues/count")
+		auth.newIssuesCount = res.count
+
+		toast(`Статус изменен: "${newStatus}"`)
+	} catch (e) {
+		toast(e.message)
+	}
+}
+
 async function addBlock() {
 	try {
 		await post(`/rooms/${roomDetail.value.id}/blocks`, blockForm.value)
@@ -34,6 +66,7 @@ async function addBlock() {
 		toast(e.message)
 	}
 }
+
 async function removeBlock(b) {
 	await del("/blocks/" + b.id)
 	blocks.value = await api(`/rooms/${roomDetail.value.id}/blocks`)
@@ -58,18 +91,16 @@ const floors = computed(() => {
 	for (const r of rooms.value) (map[r.floor ?? "—"] ||= []).push(r)
 	return Object.entries(map)
 })
+
 function tileClass(r) {
 	if (r.occupied === 0) return "free"
 	if (r.occupied >= r.capacity) return "full"
 	return "part"
 }
+
 function openBed(bed) {
 	if (!canEdit) return
 	placement.value = { bed, existing: bed.placement }
-}
-async function onSaved() {
-	placement.value = null
-	await load()
 }
 </script>
 
@@ -91,23 +122,33 @@ async function onSaved() {
 			<div class="section-title">Этаж {{ floor }} <span class="muted" style="font-weight: 400">· {{ list.length }} ном.</span></div>
 			<div class="tiles">
 				<button
-					v-for="r in list"
-					:key="r.id"
-					class="tile"
-					:class="[tileClass(r), { blocked: r.block }]"
-					:title="r.beds.map((b) => `${b.label}: ${b.placement ? b.placement.resident_name || b.placement.status_name : 'свободно'}`).join('\n')"
-					@click="openRoom(r)"
-				>
-					<div class="num">№ {{ r.number }} <Icon v-if="r.block" name="wrench" class="wrench" title="На ремонте" /></div>
-					<div class="sub">{{ r.class_name || "—" }} · {{ r.occupied }}/{{ r.capacity }}</div>
-					<div class="beds"><span v-for="b in r.beds" :key="b.id" class="bd" :style="{ background: b.placement ? b.placement.status_color : 'transparent' }" /></div>
-				</button>
+          v-for="r in list"
+          :key="r.id"
+          class="tile"
+          :class="[tileClass(r), { blocked: r.block, service: r.has_fixing_issues }]"
+          @click="openRoom(r)"
+        >
+          <div class="num">
+            № {{ r.number }}
+            <Icon v-if="r.block" name="wrench" class="wrench" title="На ремонте" />
+
+            <Icon v-if="r.has_fixing_issues" name="clock" class="service-icon" title="На обслуживании (текущий ремонт)" />
+
+            <span v-if="r.has_new_issues" class="issue-badge-alert" title="Есть новые жалобы от жильцов!">
+              ⚠️ {{ r.has_new_issues }}
+            </span>
+          </div>
+          <div class="sub">{{ r.class_name || "—" }} · {{ r.occupied }}/{{ r.capacity }}</div>
+          <div class="beds"><span v-for="b in r.beds" :key="b.id" class="bd" :style="{ background: b.placement ? b.placement.status_color : 'transparent' }" /></div>
+        </button>
+
 			</div>
 		</div>
 
 		<Modal v-if="roomDetail" :title="'Номер № ' + roomDetail.number" @close="roomDetail = null">
 			<p class="muted" style="margin: 0">Занято {{ roomDetail.occupied }} из {{ roomDetail.capacity }} · {{ date }}</p>
 			<div v-if="roomDetail.block" class="block-note"><Icon name="wrench" /> На ремонте: {{ roomDetail.block.date_from }} – {{ roomDetail.block.date_to }}<template v-if="roomDetail.block.reason"> · {{ roomDetail.block.reason }}</template></div>
+
 			<div class="grid" style="gap: var(--gap-sm)">
 				<button v-for="b in roomDetail.beds" :key="b.id" class="bedrow" @click="openBed(b)">
 					<span class="dot" :style="{ background: b.placement ? b.placement.status_color : 'var(--color-gray)' }" />
@@ -118,6 +159,30 @@ async function onSaved() {
 					</span>
 					<Icon v-if="canEdit" name="pencil" class="muted" />
 				</button>
+			</div>
+
+			<div class="section-title" style="font-size: var(--font-size-nm); margin-top: var(--gap-md)">
+				Заявки и жалобы жильцов ({{ activeIssues.length }})
+			</div>
+
+			<div v-if="!activeIssues.length" class="muted" style="font-size: var(--font-size-sm)">
+				Активных жалоб от жильцов нет.
+			</div>
+
+			<div v-else class="grid" style="gap: var(--gap-xs); margin-bottom: var(--gap-md)">
+				<div v-for="issue in activeIssues" :key="issue.id" class="issue-row" :class="issue.status">
+					<div class="grow">
+						<div style="font-weight: 700; font-size: var(--font-size-sm)">
+							{{ issue.amenity_name }} <span class="issue-badge">{{ issue.status }}</span>
+						</div>
+						<div style="font-size: 13px; color: var(--color-base); margin-top: 2px;">{{ issue.comment }}</div>
+						<div class="muted" style="font-size: 10px; margin-top: 2px;">От: {{ issue.user_name || 'Вахтовик' }} · {{ issue.created_at }}</div>
+					</div>
+					<div class="row" style="gap: 4px">
+						<button v-if="issue.status === 'Новая'" class="btn btn-sm" style="padding: 4px 8px; font-size: 11px" @click="updateIssueStatus(issue, 'В работе')">В работу</button>
+						<button v-if="issue.status !== 'Починено'" class="btn btn-sm" style="padding: 4px 8px; font-size: 11px; background: var(--color-green); color: #000" @click="updateIssueStatus(issue, 'Починено')">Починено</button>
+					</div>
+				</div>
 			</div>
 
 			<template v-if="canEdit">
@@ -134,8 +199,6 @@ async function onSaved() {
 				</div>
 			</template>
 		</Modal>
-
-		<PlacementModal v-if="placement" :bed="placement.bed" :existing="placement.existing" :date="date" @saved="onSaved" @close="placement = null" />
 	</div>
 </template>
 
@@ -224,5 +287,77 @@ async function onSaved() {
 	width: 10px;
 	height: 10px;
 	border-radius: var(--radius-max);
+}
+.issue-badge-alert {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--color-red, #ff5c5c);
+	color: #ffffff !important;
+	font-size: 11px;
+	font-weight: 700;
+	padding: 2px 6px;
+	border-radius: 10px;
+	margin-left: 6px;
+	vertical-align: middle;
+	line-height: 1;
+	animation: alert-pulse 2s infinite;
+}
+@keyframes alert-pulse {
+	0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 92, 92, 0.7); }
+	70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(255, 92, 92, 0); }
+	100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 92, 92, 0); }
+}
+.issue-row {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	padding: var(--gap-sm) var(--gap-md);
+	background: var(--color-bg);
+	border: 1px solid var(--color-divider);
+	border-left: 4px solid var(--color-gray);
+	border-radius: var(--radius-md);
+	text-align: left;
+}
+.issue-row.Новая { border-left-color: var(--color-red, #ff5c5c); background: var(--color-red-bg, #fff5f5); }
+.issue-row.В\ работе { border-left-color: var(--color-orange, #ff9f43); background: #fffbef; }
+.issue-row.Починено { border-left-color: var(--color-green, #1bd96a); opacity: 0.6; }
+.issue-badge { font-size: 10px; padding: 1px 5px; background: var(--color-button-bg); border-radius: var(--radius-sm); margin-left: 6px; font-weight: 400; }
+.tile .num {
+	display: flex;
+	align-items: center;       /* Выравнивает по центру вертикали */
+	justify-content: center;   /* Центрирует внутри плитки */
+	gap: 6px;                  /* Аккуратный отступ между номером и бэджем */
+	font-weight: 700;
+	font-size: var(--font-size-nm, 16px);
+	line-height: 1;
+}
+
+/* Корректируем сам бэдж, чтобы он не раздувал плитку по высоте */
+.issue-badge-alert {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--color-red, #ff5c5c);
+	color: #ffffff !important;
+	font-size: 11px;
+	font-weight: 700;
+	padding: 2px 6px;
+	border-radius: 10px;
+	line-height: 1;
+	height: 18px;              /* Жесткая высота, чтобы бэдж был аккуратным */
+	flex-shrink: 0;            /* Запрещаем бэджу сжиматься */
+	animation: alert-pulse 2s infinite;
+}
+
+.tile.service {
+	border-left: 4px solid var(--color-brand, #7a5cff) !important;
+}
+
+.service-icon {
+	color: var(--color-brand, #7a5cff);
+	margin-left: 6px;
+	font-size: 14px;
+	vertical-align: middle;
 }
 </style>

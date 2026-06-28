@@ -8,21 +8,40 @@ const auth = useAuthStore()
 const canEdit = auth.can("editor")
 const hotels = ref([])
 const hotelId = ref(null)
-const from = ref(new Date().toISOString().slice(0, 10))
-const span = ref(14)
-const rooms = ref([])
+
+// Стартовая дата строго в местном времени часового пояса ПК
+const from = ref((() => {
+	const d = new Date()
+	const yyyy = d.getFullYear()
+	const mm = String(d.getMonth() + 1).padStart(2, "0")
+	const dd = String(d.getDate()).padStart(2, "0")
+	return `${yyyy}-${mm}-${dd}`
+})())
+const span = ref(30);
+
+const allRooms = ref([])
 const placements = ref([])
 const statuses = ref([])
 const placement = ref(null)
 const loading = ref(false)
 
+const rooms = computed(() => {
+	if (!auth.roomClassFilter) return allRooms.value;
+	return allRooms.value.filter(rm => rm.class_name === auth.roomClassFilter);
+});
+
 const days = computed(() => {
 	const out = []
-	const start = new Date(from.value + "T00:00:00")
+	const [year, month, day] = from.value.split("-").map(Number)
+	const start = new Date(year, month - 1, day)
+
 	for (let i = 0; i < span.value; i++) {
 		const d = new Date(start)
 		d.setDate(d.getDate() + i)
-		out.push(d.toISOString().slice(0, 10))
+		const yyyy = d.getFullYear()
+		const mm = String(d.getMonth() + 1).padStart(2, "0")
+		const dd = String(d.getDate()).padStart(2, "0")
+		out.push(`${yyyy}-${mm}-${dd}`)
 	}
 	return out
 })
@@ -38,13 +57,28 @@ async function load() {
 	loading.value = true
 	try {
 		const to = days.value[days.value.length - 1]
-		const [r, p] = await Promise.all([api(`/rooms?hotel_id=${hotelId.value}`), api(`/placements?from=${from.value}&to=${to}`)])
-		rooms.value = r
+		const [r, p] = await Promise.all([
+			api(`/rooms?hotel_id=${hotelId.value}`),
+			api(`/placements?from=${from.value}&to=${to}`)
+		])
+		allRooms.value = r;
 		const bedIds = new Set(r.flatMap((rm) => rm.beds.map((b) => b.id)))
 		placements.value = p.filter((x) => bedIds.has(x.bed_id))
 	} finally {
 		loading.value = false
 	}
+}
+
+function shiftFrom(delta) {
+	const [year, month, day] = from.value.split("-").map(Number)
+	const d = new Date(year, month - 1, day)
+	d.setDate(d.getDate() + delta)
+
+	const yyyy = d.getFullYear()
+	const mm = String(d.getMonth() + 1).padStart(2, "0")
+	const dd = String(d.getDate()).padStart(2, "0")
+	from.value = `${yyyy}-${mm}-${dd}`
+	load()
 }
 
 function cellFor(bedId, day) {
@@ -76,34 +110,35 @@ function onSaved() {
 	placement.value = null
 	load()
 }
-function shiftFrom(delta) {
-	const d = new Date(from.value + "T00:00:00")
-	d.setDate(d.getDate() + delta)
-	from.value = d.toISOString().slice(0, 10)
-	load()
-}
 </script>
 
 <template>
-	<div class="grid">
-		<div class="spread">
-			<div>
-				<h1>Бронирование</h1>
-				<p class="muted" style="margin-top: 2px">Ленточный график размещений по датам — нажмите клетку, чтобы заселить</p>
-			</div>
+	<div class="card row wrap" style="align-items: flex-end">
+		<div class="field" style="margin: 0">
+			<label>Гостиница</label>
+			<select v-model="hotelId" style="width: auto" @change="load">
+				<option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option>
+			</select>
 		</div>
-
-		<div class="card row wrap" style="align-items: flex-end">
-			<div class="field" style="margin: 0"><label>Гостиница</label><select v-model="hotelId" style="width: auto" @change="load"><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></select></div>
-			<div class="field" style="margin: 0"><label>С даты</label><input v-model="from" type="date" style="width: auto" @change="load" /></div>
-			<div class="field" style="margin: 0"><label>Период</label><select v-model.number="span" style="width: auto" @change="load"><option :value="7">7 дней</option><option :value="14">14 дней</option><option :value="30">30 дней</option></select></div>
-			<button class="btn btn-sm" @click="shiftFrom(-span)">‹ Назад</button>
-			<button class="btn btn-sm" @click="shiftFrom(span)">Вперёд ›</button>
-			<div class="grow"></div>
-			<div class="legend row wrap">
-				<span v-for="s in statuses" :key="s.id" class="leg"><span class="ldot" :style="{ background: s.color }" /> {{ s.name }}</span>
-			</div>
+		<div class="field" style="margin: 0">
+			<label>С даты</label>
+			<input v-model="from" type="date" style="width: auto" @change="load" />
 		</div>
+		<div class="field" style="margin: 0">
+			<label>Период</label>
+			<select v-model.number="span" style="width: auto" @change="load">
+				<option :value="7">7 дней</option>
+				<option :value="14">14 дней</option>
+				<option :value="30">30 дней</option>
+			</select>
+		</div>
+		<button class="btn btn-sm" @click="shiftFrom(-span)">‹ Назад</button>
+		<button class="btn btn-sm" @click="shiftFrom(span)">Вперёд ›</button>
+		<div class="grow"></div>
+		<div class="legend row wrap">
+			<span v-for="s in statuses" :key="s.id" class="leg"><span class="ldot" :style="{ background: s.color }" /> {{ s.name }}</span>
+		</div>
+	</div>
 
 		<div v-if="loading" class="muted">Загрузка…</div>
 		<div v-else class="rack-wrap">
@@ -141,8 +176,14 @@ function shiftFrom(delta) {
 			</table>
 		</div>
 
-		<PlacementModal v-if="placement" :bed="placement.bed" :existing="placement.existing" :date="placement.date" @saved="onSaved" @close="placement = null" />
-	</div>
+		<PlacementModal
+		v-if="placement"
+		:bed="placement.bed"
+		:existing="placement.existing"
+		:date="placement.date"
+		@saved="onSaved"
+		@close="placement = null"
+	/>
 </template>
 
 <style scoped>

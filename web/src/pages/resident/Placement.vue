@@ -2,15 +2,51 @@
 import { ref, onMounted } from "vue"
 import { useOverview } from "@/api/me"
 import { amenityIcon } from "@/icons"
+import { post } from "@/api/client"
+import { toast } from "@/toast"
 import Icon from "@/components/Icon.vue"
 import Gallery from "@/components/Gallery.vue"
+import Modal from "@/components/Modal.vue"
 
 const { overview, load } = useOverview()
 const data = ref(null)
 const stageLabel = { expected: "Ожидается", checked_in: "Проживает", checked_out: "Выехал", cancelled: "Отменён" }
+
+const isModalOpen = ref(false)
+const selectedAmenity = ref(null)
+const issueComment = ref("")
+const isSending = ref(false)
+
 onMounted(async () => {
 	data.value = await load()
 })
+
+function reportIssue(amenity) {
+	selectedAmenity.value = amenity
+	issueComment.value = ""
+	isModalOpen.value = true
+}
+
+async function sendIssue() {
+	if (!issueComment.value.trim()) {
+		toast("Пожалуйста, опишите проблему")
+		return
+	}
+	isSending.value = true
+	try {
+		await post("/me/issues", {
+			room_id: data.value.room.id,
+			amenity_name: selectedAmenity.value.name,
+			comment: issueComment.value.trim()
+		})
+		toast("Заявка на ремонт успешно отправлена!")
+		isModalOpen.value = false
+	} catch (e) {
+		toast("Ошибка при отправке: " + e.message)
+	} finally {
+		isSending.value = false
+	}
+}
 </script>
 
 <template>
@@ -45,15 +81,37 @@ onMounted(async () => {
 				<div class="section-title">Что в номере</div>
 				<p v-if="data.room?.description" class="muted" style="margin-top: 0">{{ data.room.description }}</p>
 				<div v-if="data.room?.amenities?.length" class="amenities">
-					<span v-for="a in data.room.amenities" :key="a.name" class="chip amenity"><Icon :name="amenityIcon(a.icon)" /> {{ a.name }}</span>
+					<button
+						v-for="a in data.room.amenities"
+						:key="a.name"
+						class="chip amenity clickable"
+						title="Сообщить о поломке"
+						@click="reportIssue(a)"
+					>
+						<Icon :name="amenityIcon(a.icon)" /> {{ a.name }}
+					</button>
 				</div>
-				<p v-else class="muted">Удобства не указаны.</p>
+				<p class="muted" v-else>Удобства не указаны.</p>
 			</div>
 		</template>
+
+		<Modal v-if="isModalOpen" :title="'Поломка: ' + selectedAmenity?.name" @close="isModalOpen = false">
+			<div class="grid" style="gap: var(--gap-sm)">
+				<p style="margin: 0">Опишите, что случилось с элементом <b>{{ selectedAmenity?.name }}</b> в комнате № {{ data.placement.room_number }}:</p>
+				<textarea v-model="issueComment" placeholder="Например: течет, не включается, шумит..." rows="3" style="width: 100%" :disabled="isSending" />
+			</div>
+			<template #foot>
+				<button class="btn" :disabled="isSending" @click="isModalOpen = false">Отмена</button>
+				<button class="btn btn-primary" :disabled="isSending" @click="sendIssue">
+					{{ isSending ? 'Отправка...' : 'Сообщить мастеру' }}
+				</button>
+			</template>
+		</Modal>
 	</div>
 </template>
 
 <style scoped>
+
 .back {
 	font-weight: 700;
 	color: var(--color-secondary);
@@ -85,4 +143,6 @@ onMounted(async () => {
 	font-weight: var(--font-weight-medium);
 	font-size: var(--font-size-sm);
 }
+.clickable { cursor: pointer; border: 1px solid var(--color-divider, #ccc); background: var(--color-bg, #fff); font-family: inherit; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 6px; }
+.clickable:hover { background: var(--color-red-bg, #fff5f5); border-color: var(--color-red, #ff5c5c); color: var(--color-red, #ff5c5c); transform: translateY(-1px); }
 </style>

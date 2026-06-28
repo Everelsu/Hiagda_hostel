@@ -82,6 +82,7 @@ api.use(authenticate)
 
 const AUDIT_LABELS = [
 	[/^\/placements/, "Размещение"],
+	[/^\/me\/issues/, "Заявка на ремонт"],
 	[/^\/residents/, "Проживающий"],
 	[/^\/rooms/, "Номер"],
 	[/^\/hotels/, "Гостиница"],
@@ -93,8 +94,14 @@ const AUDIT_LABELS = [
 ]
 const AUDIT_VERB = { POST: "создание", PUT: "изменение", DELETE: "удаление" }
 function auditSummary(req) {
-	const entity = (AUDIT_LABELS.find(([re]) => re.test(req.path)) || [, "Запись"])[1]
-	return `${entity}: ${AUDIT_VERB[req.method] || req.method.toLowerCase()}`
+	const entity = (AUDIT_LABELS.find(([re]) => re.test(req.path)) || [, "Запись"])[1];
+	if (entity === "Заявка на ремонт" && req.method === "POST") return "Подана заявка на ремонт";
+	if (entity === "Размещение") {
+		if (req.method === "DELETE" || (req.method === "PUT" && req.body?.stage === "cancelled")) {
+			return "Размещение: отмена брони";
+		}
+	}
+	return `${entity}: ${AUDIT_VERB[req.method] || req.method.toLowerCase()}`;
 }
 
 api.use((req, res, next) => {
@@ -236,6 +243,33 @@ api.put("/me/profile", (req, res) => {
 	)
 	res.json({ ok: true })
 })
+
+api.get("/me/issues/count", (req, res) => {
+	try {
+		const row = db.prepare("SELECT COUNT(*) as count FROM room_issues WHERE status = 'Новая'").get();
+		res.json({ count: row ? row.count : 0 });
+	} catch (e) {
+		res.status(500).json({ error: e.message });
+	}
+});
+
+api.post("/me/issues", (req, res) => {
+	const { room_id, amenity_name, comment } = req.body || {}
+	if (!room_id) return res.status(400).json({ error: "Не указан ID комнаты" })
+	if (!comment || !comment.trim()) return res.status(400).json({ error: "Пожалуйста, опишите проблему" })
+
+	try {
+		db.prepare(`
+			INSERT INTO room_issues (room_id, user_id, amenity_name, comment, status, created_at) 
+			VALUES (?, ?, ?, ?, 'Новая', datetime('now', 'localtime'))
+		`).run(room_id, req.user?.id ?? null, amenity_name, comment.trim())
+
+		res.json({ ok: true })
+	} catch (e) {
+		res.status(500).json({ error: e.message })
+	}
+})
+
 
 api.use(requireStaff)
 
@@ -493,33 +527,47 @@ api.get("/analytics", (req, res) => {
 })
 
 api.get("/plan", (req, res) => {
-	if (!req.query.hotel_id) return res.json({ date: null, rooms: [] })
-	const date = req.query.date || new Date().toISOString().slice(0, 10)
-	const rooms = db
-		.prepare(
-			`SELECT r.*, c.name AS class_name FROM rooms r
-			 LEFT JOIN room_classes c ON c.id = r.class_id
-			 WHERE r.hotel_id = ? ORDER BY r.floor, r.number`,
-		)
-		.all(req.query.hotel_id)
-	const bedStmt = db.prepare("SELECT * FROM beds WHERE room_id = ? ORDER BY id")
-	const plStmt = db.prepare(
-		`SELECT p.id, p.resident_id, p.date_from, p.date_to, p.comment, p.stage,
-			r.full_name AS resident_name, s.name AS status_name, s.color AS status_color
-		 FROM placements p
-		 JOIN statuses s ON s.id = p.status_id
-		 LEFT JOIN residents r ON r.id = p.resident_id
-		 WHERE p.bed_id = ? AND p.date_from <= ? AND p.date_to >= ? LIMIT 1`,
-	)
-	const blockStmt = db.prepare(
-		"SELECT id, reason, date_from, date_to FROM room_blocks WHERE room_id = ? AND date_from <= ? AND date_to >= ? LIMIT 1",
-	)
-	for (const room of rooms) {
-		room.beds = bedStmt.all(room.id).map((b) => ({ ...b, placement: plStmt.get(b.id, date, date) || null }))
-		room.occupied = room.beds.filter((b) => b.placement).length
-		room.block = blockStmt.get(room.id, date, date) || null
+	try {
+		// Извлекаем переданную дату из параметров запроса фронтенда
+		const date = req.query.date || new Date().toISOString().slice(0, 10);
+
+		// 1. Собираем комнаты с подсчетом новых жалоб
+		const rooms = db.prepare(`
+			SELECT r.*, c.name AS class_name,
+				(SELECT COUNT(*) FROM room_issues WHERE room_id = r.id AND status = 'Новая') AS has_new_issues,
+				-- ДОБАВЛЕНО: считаем жалобы, которые прямо сейчас "В работе"
+				(SELECT COUNT(*) FROM room_issues WHERE room_id = r.id AND status = 'В работе') AS has_fixing_issues
+			FROM rooms r
+			LEFT JOIN room_classes c ON c.id = r.class_id
+			WHERE r.hotel_id = ? 
+			ORDER BY r.floor, r.number
+		`).all(req.query.hotel_id);
+
+		const bedStmt = db.prepare("SELECT * FROM beds WHERE room_id = ? ORDER BY id")
+		const plStmt = db.prepare(`
+			SELECT p.id, p.resident_id, p.date_from, p.date_to, p.comment, p.stage,
+				r.full_name AS resident_name, s.name AS status_name, s.color AS status_color
+			FROM placements p
+			JOIN statuses s ON s.id = p.status_id
+			LEFT JOIN residents r ON r.id = p.resident_id
+			WHERE p.bed_id = ? AND p.date_from <= ? AND p.date_to >= ? LIMIT 1
+		`)
+		const blockStmt = db.prepare(`
+			SELECT id, reason, date_from, date_to 
+			FROM room_blocks 
+			WHERE room_id = ? AND date_from <= ? AND date_to >= ? LIMIT 1
+		`)
+
+		for (const room of rooms) {
+			room.beds = bedStmt.all(room.id).map((b) => ({ ...b, placement: plStmt.get(b.id, date, date) || null }))
+			room.occupied = room.beds.filter((b) => b.placement).length
+			room.block = blockStmt.get(room.id, date, date) || null
+		}
+
+		res.json({ date, rooms })
+	} catch (e) {
+		res.status(500).json({ error: e.message })
 	}
-	res.json({ date, rooms })
 })
 
 const ROLES = ["admin", "editor", "viewer"]
@@ -1215,6 +1263,32 @@ api.post("/import/residents", requireRole("editor"), upload.single("file"), asyn
 	tx()
 	res.json({ imported: count })
 })
+
+api.get("/rooms/:id/issues", (req, res) => {
+	try {
+		const issues = db.prepare(`
+			SELECT ri.*, u.full_name as user_name 
+			FROM room_issues ri
+			LEFT JOIN users u ON u.id = ri.user_id
+			WHERE ri.room_id = ?
+			ORDER BY ri.id DESC
+		`).all(req.params.id);
+		res.json(issues);
+	} catch (e) {
+		res.status(500).json({ error: e.message });
+	}
+});
+
+api.put("/issues/:id/status", (req, res) => {
+	const { status } = req.body || {};
+	if (!status) return res.status(400).json({ error: "Укажите status" });
+	try {
+		db.prepare("UPDATE room_issues SET status = ? WHERE id = ?").run(status, req.params.id);
+		res.json({ ok: true });
+	} catch (e) {
+		res.status(500).json({ error: e.message });
+	}
+});
 
 async function sendXlsx(res, data, name, header) {
 	const wb = new ExcelJS.Workbook()

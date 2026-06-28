@@ -55,29 +55,65 @@ async function createResident() {
 }
 
 async function save() {
+	if (stage.value === "cancelled") {
+		if (!confirm("Отменить эту бронь?")) return;
+	} else {
+		if (!residentName.value.trim()) {
+			toast("Пожалуйста, введите ФИО проживающего");
+			return;
+		}
+
+		if (props.existing && props.existing.resident_id) {
+			if (residentName.value.trim() !== (props.existing.resident_name || "")) {
+				try {
+					await api(`/residents/${props.existing.resident_id}`, {
+						method: "PUT",
+						body: JSON.stringify({ full_name: residentName.value.trim() })
+					});
+					toast("Данные проживающего обновлены");
+				} catch (e) {
+					toast("Не удалось обновить ФИО: " + e.message);
+					return;
+				}
+			}
+		} else if (!residentId.value && residentName.value.trim()) {
+			try {
+				const newResident = await post("/residents", { full_name: residentName.value.trim() });
+				residentId.value = newResident.id;
+			} catch (e) {
+				toast("Ошибка при создании проживающего: " + e.message);
+				return;
+			}
+		}
+	}
+
 	const payload = {
 		bed_id: props.bed.id,
-		resident_id: residentId.value,
+		resident_id: residentId.value || props.existing?.resident_id,
 		status_id: Number(statusId.value),
 		stage: stage.value,
 		date_from: dateFrom.value,
 		date_to: dateTo.value,
 		comment: comment.value,
-	}
+	};
+
 	try {
-		if (props.existing) await put("/placements/" + props.existing.id, payload)
-		else await post("/placements", payload)
-		emit("saved")
+		if (props.existing) {
+			await api(`/placements/${props.existing.id}`, { method: "PUT", body: JSON.stringify(payload) });
+		} else {
+			await api("/placements", { method: "POST", body: JSON.stringify(payload) });
+		}
+		emit("saved");
 	} catch (e) {
-		toast(e.message)
+		toast(e.message);
 	}
 }
+
 async function remove() {
-	if (!confirm("Удалить это размещение?")) return
-	await del("/placements/" + props.existing.id)
-	emit("saved")
+	if (!confirm("Удалить это размещение?")) return;
+	await del("/placements/" + props.existing.id);
+	emit("saved");
 }
-const exactExists = computed(() => suggestions.value.some((s) => s.full_name.toLowerCase() === residentName.value.trim().toLowerCase()))
 </script>
 
 <template>
@@ -87,11 +123,11 @@ const exactExists = computed(() => suggestions.value.some((s) => s.full_name.toL
 		<div class="field">
 			<label>Проживающий</label>
 			<input v-model="residentName" placeholder="Начните вводить ФИО" @input="onResidentInput" />
-			<div v-if="suggestions.length || (residentName.trim().length >= 2 && !exactExists)" class="suggest">
+			<div v-if="suggestions.length || (residentName.trim().length >= 2 && !exactExists && !existing)" class="suggest">
 				<button v-for="s in suggestions" :key="s.id" type="button" class="sug" @click="pick(s)">
 					{{ s.full_name }}<span v-if="s.tab_number" class="muted"> · {{ s.tab_number }}</span>
 				</button>
-				<button v-if="!exactExists && residentName.trim().length >= 2" type="button" class="sug add" @click="createResident">
+				<button v-if="!exactExists && residentName.trim().length >= 2 && !existing" type="button" class="sug add" @click="createResident">
 					+ Создать «{{ residentName.trim() }}»
 				</button>
 			</div>
@@ -135,11 +171,6 @@ const exactExists = computed(() => suggestions.value.some((s) => s.full_name.toL
 	font: inherit;
 	cursor: pointer;
 }
-.sug:hover {
-	background: var(--color-button-bg);
-}
-.sug.add {
-	color: var(--color-green);
-	font-weight: 700;
-}
+.sug:hover { background: var(--color-button-bg); }
+.sug.add { color: var(--color-green); font-weight: 700; }
 </style>
