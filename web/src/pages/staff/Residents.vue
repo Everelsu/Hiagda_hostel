@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from "vue"
-import { api, post, put, del } from "@/api/client"
+import { api, post, put, del, download } from "@/api/client"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
 import Modal from "@/components/Modal.vue"
@@ -53,7 +53,7 @@ async function openCard(r) {
 	card.value = await api(`/residents/${r.id}/card`)
 }
 function report(r) {
-	window.open("/api/report/resident/" + r.id, "_blank")
+    download("/report/resident/" + r.id)
 }
 
 async function issueAccount(r, reset = false) {

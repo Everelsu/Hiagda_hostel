@@ -30,6 +30,26 @@ export async function api(path, opts = {}) {
 	return ct.includes("application/json") ? res.json() : res
 }
 
+export async function download(path) {
+    const res = await api(path)
+
+    const blob = await res.blob()
+
+    const cd = res.headers.get("Content-Disposition") || ""
+    const name = (cd.match(/filename="(.+)"/) || [])[1] || "download"
+
+    const url = URL.createObjectURL(blob)
+
+    const a = document.createElement("a")
+    a.href = url
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+
+    URL.revokeObjectURL(url)
+}
+
 export const get = (p) => api(p)
 export const post = (p, body) => api(p, { method: "POST", body: JSON.stringify(body) })
 export const put = (p, body) => api(p, { method: "PUT", body: JSON.stringify(body) })
