@@ -2,7 +2,8 @@
 import { onMounted, onUnmounted } from "vue"
 import { useRouter } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
-import { toasts } from "@/toast"
+import ToastHost from "@/ui/ToastHost.vue"
+import ConfirmHost from "@/ui/ConfirmHost.vue"
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -21,7 +22,6 @@ onUnmounted(() => window.removeEventListener("noch:unauthorized", onUnauthorized
 
 <template>
 	<router-view />
-	<div class="toasts">
-		<div v-for="t in toasts" :key="t.id" class="toast">{{ t.message }}</div>
-	</div>
+	<ToastHost />
+	<ConfirmHost />
 </template>

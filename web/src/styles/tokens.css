@@ -112,4 +112,26 @@ html {
 	--font-weight-medium: 500;
 	--font-weight-bold: 700;
 	--font-weight-extrabold: 800;
+
+	--control-h-sm: 1.75rem;
+	--control-h-md: 2.25rem;
+	--control-h-lg: 2.75rem;
+
+	--focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-brand);
+
+	--speed-fast: 100ms;
+	--speed: 180ms;
+
+	--z-sticky: 10;
+	--z-drawer: 100;
+	--z-modal: 110;
+	--z-popover: 120;
+	--z-toast: 200;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	* {
+		animation-duration: 0.001ms !important;
+		transition-duration: 0.001ms !important;
+	}
 }

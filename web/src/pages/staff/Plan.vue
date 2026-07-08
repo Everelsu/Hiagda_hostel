@@ -3,11 +3,14 @@ import { ref, onMounted, computed } from "vue"
 import { api, post, del } from "@/api/client"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
+import { useCounters } from "@/stores/counters"
 import Modal from "@/components/Modal.vue"
 import PlacementModal from "@/components/PlacementModal.vue"
 import Icon from "@/components/Icon.vue"
+import { PageHeader, FilterBar, Select, Input, Badge } from "@/ui"
 
 const auth = useAuthStore()
+const counters = useCounters()
 const canEdit = auth.can("editor")
 const hotels = ref([])
 const hotelId = ref(null)
@@ -45,11 +48,8 @@ async function updateIssueStatus(issue, newStatus) {
 		roomIssues.value = await api(`/rooms/${roomDetail.value.id}/issues`)
 		await load()
 
-		// ДОБАВЛЕНО: Принудительно уменьшаем счётчик в меню или запрашиваем актуальный с сервера
-		const res = await api("/me/issues/count")
-		auth.newIssuesCount = res.count
-
-		toast(`Статус изменен: "${newStatus}"`)
+		counters.refresh()
+		toast.success(`Статус изменён: «${newStatus}»`)
 	} catch (e) {
 		toast(e.message)
 	}
@@ -106,11 +106,14 @@ function openBed(bed) {
 
 <template>
 	<div class="grid">
-		<h1>План этажа</h1>
-		<div class="row wrap">
-			<select v-model="hotelId" style="width: auto" @change="load"><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></select>
-			<input v-model="date" type="date" style="width: auto" @change="load" />
-		</div>
+		<PageHeader title="План этажа" icon="layout">
+			<template #actions>
+				<FilterBar>
+					<Select v-model="hotelId" @change="load"><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></Select>
+					<Input v-model="date" type="date" @change="load" />
+				</FilterBar>
+			</template>
+		</PageHeader>
 
 		<div class="legend row wrap">
 			<span class="chip"><span class="dot" style="background: var(--color-gray)" /> Свободно</span>
@@ -126,17 +129,14 @@ function openBed(bed) {
           :key="r.id"
           class="tile"
           :class="[tileClass(r), { blocked: r.block, service: r.has_fixing_issues }]"
+          :title="`№ ${r.number} · занято ${r.occupied}/${r.capacity} · свободно ${Math.max(0, r.capacity - r.occupied)}${r.block ? ' · на ремонте' : ''}`"
           @click="openRoom(r)"
         >
           <div class="num">
             № {{ r.number }}
             <Icon v-if="r.block" name="wrench" class="wrench" title="На ремонте" />
-
             <Icon v-if="r.has_fixing_issues" name="clock" class="service-icon" title="На обслуживании (текущий ремонт)" />
-
-            <span v-if="r.has_new_issues" class="issue-badge-alert" title="Есть новые жалобы от жильцов!">
-              ⚠️ {{ r.has_new_issues }}
-            </span>
+            <Badge v-if="r.has_new_issues" variant="danger" title="Есть новые жалобы от жильцов">{{ r.has_new_issues }}</Badge>
           </div>
           <div class="sub">{{ r.class_name || "—" }} · {{ r.occupied }}/{{ r.capacity }}</div>
           <div class="beds"><span v-for="b in r.beds" :key="b.id" class="bd" :style="{ background: b.placement ? b.placement.status_color : 'transparent' }" /></div>

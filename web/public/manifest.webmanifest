@@ -1,0 +1,16 @@
+{
+	"name": "NochOtel — кабинет вахтовика",
+	"short_name": "NochOtel",
+	"description": "Учёт номерного фонда вахтовых гостиниц",
+	"start_url": "/me",
+	"scope": "/",
+	"display": "standalone",
+	"orientation": "portrait",
+	"background_color": "#16181c",
+	"theme_color": "#16181c",
+	"lang": "ru",
+	"icons": [
+		{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+		{ "src": "/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+	]
+}

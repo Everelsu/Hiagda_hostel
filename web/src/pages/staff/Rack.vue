@@ -1,8 +1,9 @@
 <script setup>
-import { ref, onMounted, computed } from "vue"
+import { ref, onMounted, onUnmounted, computed } from "vue"
 import { api } from "@/api/client"
 import { useAuthStore } from "@/stores/auth"
 import PlacementModal from "@/components/PlacementModal.vue"
+import { PageHeader, FilterBar, Field, Select, Input, Button, StatusDot } from "@/ui"
 
 const auth = useAuthStore()
 const canEdit = auth.can("editor")
@@ -25,10 +26,12 @@ const statuses = ref([])
 const placement = ref(null)
 const loading = ref(false)
 
+const classFilter = ref("")
+const classOptions = computed(() => [...new Set(allRooms.value.map((r) => r.class_name).filter(Boolean))])
 const rooms = computed(() => {
-	if (!auth.roomClassFilter) return allRooms.value;
-	return allRooms.value.filter(rm => rm.class_name === auth.roomClassFilter);
-});
+	if (!classFilter.value) return allRooms.value
+	return allRooms.value.filter((rm) => rm.class_name === classFilter.value)
+})
 
 const days = computed(() => {
 	const out = []
@@ -103,45 +106,73 @@ function dayLabel(day) {
 	return { d: d.getDate(), wd: ["вс", "пн", "вт", "ср", "чт", "пт", "сб"][d.getDay()], weekend: d.getDay() === 0 || d.getDay() === 6, today: day === new Date().toISOString().slice(0, 10) }
 }
 function onCell(bed, day, p) {
-	if (!canEdit) return
+	if (!canEdit || dragMoved.value) return
 	placement.value = { bed: { id: bed.id, label: bed.label }, existing: p || null, date: day }
 }
 function onSaved() {
 	placement.value = null
 	load()
 }
+
+const rackWrap = ref(null)
+const dragMoved = ref(false)
+let dragging = false
+let startX = 0
+let startY = 0
+let startLeft = 0
+let startTop = 0
+
+function onDragStart(e) {
+	if (e.button !== 0) return
+	dragging = true
+	dragMoved.value = false
+	startX = e.clientX
+	startY = e.clientY
+	startLeft = rackWrap.value.scrollLeft
+	startTop = rackWrap.value.scrollTop
+}
+function onDragMove(e) {
+	if (!dragging) return
+	const dx = e.clientX - startX
+	const dy = e.clientY - startY
+	if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragMoved.value = true
+	rackWrap.value.scrollLeft = startLeft - dx
+	rackWrap.value.scrollTop = startTop - dy
+}
+function onDragEnd() {
+	dragging = false
+	setTimeout(() => (dragMoved.value = false), 0)
+}
+
+onMounted(() => {
+	window.addEventListener("mousemove", onDragMove)
+	window.addEventListener("mouseup", onDragEnd)
+})
+onUnmounted(() => {
+	window.removeEventListener("mousemove", onDragMove)
+	window.removeEventListener("mouseup", onDragEnd)
+})
 </script>
 
 <template>
-	<div class="card row wrap" style="align-items: flex-end">
-		<div class="field" style="margin: 0">
-			<label>Гостиница</label>
-			<select v-model="hotelId" style="width: auto" @change="load">
-				<option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option>
-			</select>
-		</div>
-		<div class="field" style="margin: 0">
-			<label>С даты</label>
-			<input v-model="from" type="date" style="width: auto" @change="load" />
-		</div>
-		<div class="field" style="margin: 0">
-			<label>Период</label>
-			<select v-model.number="span" style="width: auto" @change="load">
-				<option :value="7">7 дней</option>
-				<option :value="14">14 дней</option>
-				<option :value="30">30 дней</option>
-			</select>
-		</div>
-		<button class="btn btn-sm" @click="shiftFrom(-span)">‹ Назад</button>
-		<button class="btn btn-sm" @click="shiftFrom(span)">Вперёд ›</button>
-		<div class="grow"></div>
-		<div class="legend row wrap">
-			<span v-for="s in statuses" :key="s.id" class="leg"><span class="ldot" :style="{ background: s.color }" /> {{ s.name }}</span>
-		</div>
-	</div>
+	<div class="grid">
+		<PageHeader title="Бронирование" subtitle="Шахматка — тяните мышью, чтобы листать" icon="calendar" />
+
+		<FilterBar>
+			<Field label="Гостиница"><Select v-model="hotelId" @change="load"><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></Select></Field>
+			<Field label="С даты"><Input v-model="from" type="date" @change="load" /></Field>
+			<Field label="Период"><Select v-model.number="span" @change="load"><option :value="7">7 дней</option><option :value="14">14 дней</option><option :value="30">30 дней</option></Select></Field>
+			<Field label="Класс номера"><Select v-model="classFilter"><option value="">Все типы</option><option v-for="c in classOptions" :key="c" :value="c">{{ c }}</option></Select></Field>
+			<Button size="sm" icon="chevron-left" @click="shiftFrom(-span)">Назад</Button>
+			<Button size="sm" @click="shiftFrom(span)">Вперёд</Button>
+			<span class="grow" />
+			<div class="legend row wrap">
+				<span v-for="s in statuses" :key="s.id" class="leg"><StatusDot :color="s.color" /> {{ s.name }}</span>
+			</div>
+		</FilterBar>
 
 		<div v-if="loading" class="muted">Загрузка…</div>
-		<div v-else class="rack-wrap">
+		<div v-else ref="rackWrap" class="rack-wrap" @mousedown="onDragStart">
 			<table class="rack">
 				<thead>
 					<tr>
@@ -177,13 +208,14 @@ function onSaved() {
 		</div>
 
 		<PlacementModal
-		v-if="placement"
-		:bed="placement.bed"
-		:existing="placement.existing"
-		:date="placement.date"
-		@saved="onSaved"
-		@close="placement = null"
-	/>
+			v-if="placement"
+			:bed="placement.bed"
+			:existing="placement.existing"
+			:date="placement.date"
+			@saved="onSaved"
+			@close="placement = null"
+		/>
+	</div>
 </template>
 
 <style scoped>
@@ -203,9 +235,15 @@ function onSaved() {
 	border-radius: var(--radius-max);
 }
 .rack-wrap {
-	overflow-x: auto;
+	overflow: auto;
+	max-height: calc(100vh - 220px);
 	border: 1px solid var(--color-divider);
 	border-radius: var(--radius-md);
+	cursor: grab;
+	user-select: none;
+}
+.rack-wrap:active {
+	cursor: grabbing;
 }
 .rack {
 	border-collapse: separate;

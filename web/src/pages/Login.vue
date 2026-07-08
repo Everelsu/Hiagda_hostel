@@ -3,6 +3,7 @@ import { ref, onMounted } from "vue"
 import { useRouter, useRoute } from "vue-router"
 import { api, post } from "@/api/client"
 import { useAuthStore } from "@/stores/auth"
+import { Button, Field, Input } from "@/ui"
 
 const router = useRouter()
 const route = useRoute()
@@ -26,11 +27,7 @@ async function submit() {
 	busy.value = true
 	try {
 		if (needsSetup.value) {
-			const r = await post("/register-admin", {
-				username: username.value,
-				password: password.value,
-				full_name: fullName.value,
-			})
+			const r = await post("/register-admin", { username: username.value, password: password.value, full_name: fullName.value })
 			auth.setSession(r)
 		} else {
 			await auth.login(username.value, password.value)
@@ -45,50 +42,110 @@ async function submit() {
 </script>
 
 <template>
-	<div class="login-screen">
-		<form class="card login-card" @submit.prevent="submit">
-			<div class="brand-mark" style="font-size: 1.6rem"><span class="dot" /> NochOtel</div>
-			<p class="muted" style="margin-top: 4px">
-				{{ needsSetup ? "Создание администратора" : "Учёт номерного фонда вахтовых гостиниц" }}
-			</p>
+	<div class="login">
+		<aside class="login__brand">
+			<div class="login__brandinner">
+				<div class="brand-mark login__logo"><span class="dot" /> NochOtel</div>
+				<p class="login__tagline">Учёт номерного фонда вахтовых гостиниц</p>
+				<p class="login__sub">Размещение, свободные места, карта посёлков и кабинет вахтовика — в одной системе.</p>
+			</div>
+		</aside>
 
-			<div class="field">
-				<label>Логин</label>
-				<input v-model="username" autocomplete="username" />
-			</div>
-			<div class="field">
-				<label>Пароль</label>
-				<input v-model="password" type="password" autocomplete="current-password" />
-			</div>
-			<div v-if="needsSetup" class="field">
-				<label>ФИО администратора</label>
-				<input v-model="fullName" />
-			</div>
+		<main class="login__formside">
+			<form class="login__form" @submit.prevent="submit">
+				<h1 class="login__title">{{ needsSetup ? "Создание администратора" : "Вход в систему" }}</h1>
+				<p class="login__hint">{{ needsSetup ? "Задайте первый учётный аккаунт" : "Введите логин и пароль" }}</p>
 
-			<p v-if="err" class="err">{{ err }}</p>
-			<button class="btn btn-primary btn-block btn-lg" type="submit" :disabled="busy">
-				{{ needsSetup ? "Создать и войти" : "Войти" }}
-			</button>
-		</form>
+				<Field label="Логин">
+					<Input v-model="username" :invalid="!!err" />
+				</Field>
+				<Field label="Пароль">
+					<Input v-model="password" type="password" :invalid="!!err" />
+				</Field>
+				<Field v-if="needsSetup" label="ФИО администратора">
+					<Input v-model="fullName" />
+				</Field>
+
+				<p v-if="err" class="login__err">{{ err }}</p>
+				<Button variant="primary" size="lg" block type="submit" :loading="busy">
+					{{ needsSetup ? "Создать и войти" : "Войти" }}
+				</Button>
+			</form>
+		</main>
 	</div>
 </template>
 
 <style scoped>
-.login-screen {
+.login {
 	min-height: 100vh;
+	min-height: 100dvh;
+	display: grid;
+	grid-template-columns: 1.1fr 1fr;
+}
+.login__brand {
+	display: flex;
+	align-items: center;
+	padding: var(--gap-xl);
+	background: var(--brand-gradient-bg), var(--color-raised-bg);
+	border-right: 1px solid var(--color-divider);
+}
+.login__brandinner {
+	max-width: 380px;
+	margin: 0 auto;
+}
+.login__logo {
+	font-size: 1.8rem;
+}
+.login__tagline {
+	margin: var(--gap-lg) 0 0;
+	font-size: var(--font-size-xl);
+	font-weight: var(--font-weight-extrabold);
+	color: var(--color-contrast);
+	line-height: 1.25;
+}
+.login__sub {
+	margin: var(--gap-md) 0 0;
+	color: var(--color-secondary);
+}
+.login__formside {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	padding: 20px;
-	background: var(--brand-gradient-bg), var(--color-bg);
+	padding: var(--gap-xl);
 }
-.login-card {
+.login__form {
 	width: 100%;
-	max-width: 380px;
+	max-width: 360px;
 }
-.err {
+.login__title {
+	font-size: var(--font-size-xl);
+}
+.login__hint {
+	margin: 4px 0 var(--gap-xl);
+	color: var(--color-secondary);
+}
+.login__err {
 	color: var(--color-red);
 	font-size: var(--font-size-sm);
-	margin: 0 0 var(--gap-md);
+	margin: var(--gap-md) 0 0;
+}
+.login__form :deep(.k-btn) {
+	margin-top: var(--gap-lg);
+}
+@media (max-width: 720px) {
+	.login {
+		grid-template-columns: 1fr;
+	}
+	.login__brand {
+		border-right: none;
+		border-bottom: 1px solid var(--color-divider);
+		padding: var(--gap-xl) var(--gap-lg);
+	}
+	.login__tagline {
+		font-size: var(--font-size-lg);
+	}
+	.login__sub {
+		display: none;
+	}
 }
 </style>

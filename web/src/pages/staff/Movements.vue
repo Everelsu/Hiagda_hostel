@@ -1,52 +1,52 @@
 <script setup>
 import { ref, onMounted } from "vue"
 import { api } from "@/api/client"
+import { PageHeader, DataTable, StatusDot, Chip, Input } from "@/ui"
 
 const date = ref(new Date().toISOString().slice(0, 10))
 const data = ref(null)
+const loading = ref(true)
 const stageLabel = { expected: "Ожидается", checked_in: "Проживает", checked_out: "Выехал", cancelled: "Отменён" }
+const columns = [
+	{ key: "resident_name", label: "Проживающий" },
+	{ key: "hotel_name", label: "Размещение" },
+	{ key: "stage", label: "Стадия", align: "right" },
+]
 
 async function load() {
-	data.value = await api("/movements?date=" + date.value)
+	loading.value = true
+	try {
+		data.value = await api("/movements?date=" + date.value)
+	} finally {
+		loading.value = false
+	}
 }
 onMounted(load)
 </script>
 
 <template>
 	<div class="grid">
-		<div class="spread">
-			<div>
-				<h1>Заезды / выезды</h1>
-				<p class="muted" style="margin-top: 2px">Кто заселяется и выезжает в выбранную дату</p>
-			</div>
-			<input v-model="date" type="date" style="width: auto" @change="load" />
-		</div>
+		<PageHeader title="Заезды / выезды" subtitle="Кто заселяется и выезжает в выбранную дату" icon="key">
+			<template #actions><Input v-model="date" type="date" @change="load" style="width: auto" /></template>
+		</PageHeader>
 
-		<div v-if="data" class="cols">
-			<div class="card">
-				<div class="section-title">Заезды <span class="muted" style="font-weight: 400">({{ data.arrivals.length }})</span></div>
-				<p v-if="!data.arrivals.length" class="muted">Нет записей.</p>
-				<div v-for="(r, i) in data.arrivals" :key="i" class="mrow">
-					<span class="dot" :style="{ background: r.status_color }" />
-					<div class="grow">
-						<div class="contrast" style="font-weight: 700">{{ r.resident_name || "—" }}</div>
-						<div class="muted" style="font-size: var(--font-size-sm)">{{ r.hotel_name }} · № {{ r.room_number }} · {{ r.bed_label }}</div>
-					</div>
-					<span class="chip">{{ stageLabel[r.stage] }}</span>
-				</div>
-			</div>
-			<div class="card">
-				<div class="section-title">Выезды <span class="muted" style="font-weight: 400">({{ data.departures.length }})</span></div>
-				<p v-if="!data.departures.length" class="muted">Нет записей.</p>
-				<div v-for="(r, i) in data.departures" :key="i" class="mrow">
-					<span class="dot" :style="{ background: r.status_color }" />
-					<div class="grow">
-						<div class="contrast" style="font-weight: 700">{{ r.resident_name || "—" }}</div>
-						<div class="muted" style="font-size: var(--font-size-sm)">{{ r.hotel_name }} · № {{ r.room_number }} · {{ r.bed_label }}</div>
-					</div>
-					<span class="chip">{{ stageLabel[r.stage] }}</span>
-				</div>
-			</div>
+		<div class="cols">
+			<section>
+				<div class="section-title">Заезды <span class="muted" style="font-weight: 400">({{ data?.arrivals.length || 0 }})</span></div>
+				<DataTable :columns="columns" :rows="data?.arrivals || []" :loading="loading" row-key="id" empty-title="Нет заездов" empty-icon="key">
+					<template #cell-resident_name="{ row }"><StatusDot :color="row.status_color" /> <b class="contrast">{{ row.resident_name || "—" }}</b></template>
+					<template #cell-hotel_name="{ row }"><span class="muted">{{ row.hotel_name }} · № {{ row.room_number }} · {{ row.bed_label }}</span></template>
+					<template #cell-stage="{ row }"><Chip>{{ stageLabel[row.stage] }}</Chip></template>
+				</DataTable>
+			</section>
+			<section>
+				<div class="section-title">Выезды <span class="muted" style="font-weight: 400">({{ data?.departures.length || 0 }})</span></div>
+				<DataTable :columns="columns" :rows="data?.departures || []" :loading="loading" row-key="id" empty-title="Нет выездов" empty-icon="key">
+					<template #cell-resident_name="{ row }"><StatusDot :color="row.status_color" /> <b class="contrast">{{ row.resident_name || "—" }}</b></template>
+					<template #cell-hotel_name="{ row }"><span class="muted">{{ row.hotel_name }} · № {{ row.room_number }} · {{ row.bed_label }}</span></template>
+					<template #cell-stage="{ row }"><Chip>{{ stageLabel[row.stage] }}</Chip></template>
+				</DataTable>
+			</section>
 		</div>
 	</div>
 </template>
@@ -56,24 +56,9 @@ onMounted(load)
 	display: grid;
 	grid-template-columns: 1fr 1fr;
 	gap: var(--gap-lg);
+	align-items: start;
 }
-.mrow {
-	display: flex;
-	gap: var(--gap-sm);
-	align-items: center;
-	padding: var(--gap-sm) var(--gap-md);
-	background: var(--color-bg);
-	border: 1px solid var(--color-divider);
-	border-radius: var(--radius-md);
-	margin-bottom: var(--gap-sm);
-}
-.mrow .dot {
-	width: 12px;
-	height: 12px;
-	border-radius: var(--radius-max);
-	flex-shrink: 0;
-}
-@media (max-width: 800px) {
+@media (max-width: 860px) {
 	.cols {
 		grid-template-columns: 1fr;
 	}

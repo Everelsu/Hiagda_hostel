@@ -160,7 +160,38 @@ db.exec(`
 		created_at TEXT NOT NULL DEFAULT (datetime('now'))
 	);
 
+	CREATE TABLE IF NOT EXISTS announcements (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		hotel_id   INTEGER REFERENCES hotels(id) ON DELETE CASCADE,
+		title      TEXT NOT NULL,
+		body       TEXT NOT NULL,
+		pinned     INTEGER NOT NULL DEFAULT 0,
+		created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+
+	CREATE TABLE IF NOT EXISTS issue_comments (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		issue_id   INTEGER NOT NULL REFERENCES room_issues(id) ON DELETE CASCADE,
+		user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		text       TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+
+	CREATE TABLE IF NOT EXISTS hotel_info_sections (
+		id       INTEGER PRIMARY KEY AUTOINCREMENT,
+		hotel_id INTEGER NOT NULL REFERENCES hotels(id) ON DELETE CASCADE,
+		kind     TEXT NOT NULL DEFAULT 'custom',
+		title    TEXT NOT NULL,
+		body     TEXT NOT NULL,
+		sort     INTEGER NOT NULL DEFAULT 0
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+	CREATE INDEX IF NOT EXISTS idx_announcements_hotel ON announcements(hotel_id, created_at);
+	CREATE INDEX IF NOT EXISTS idx_issue_comments_issue ON issue_comments(issue_id);
+	CREATE INDEX IF NOT EXISTS idx_hotel_info_hotel ON hotel_info_sections(hotel_id, sort);
+	CREATE INDEX IF NOT EXISTS idx_placements_resident ON placements(resident_id);
 	CREATE INDEX IF NOT EXISTS idx_rooms_hotel ON rooms(hotel_id);
 	CREATE INDEX IF NOT EXISTS idx_beds_room ON beds(room_id);
 	CREATE INDEX IF NOT EXISTS idx_placements_bed ON placements(bed_id);
@@ -200,6 +231,14 @@ addColumn("hotels", "latitude", "TEXT")
 addColumn("hotels", "longitude", "TEXT")
 addColumn("residents", "about", "TEXT")
 addColumn("residents", "photo", "TEXT")
+addColumn("residents", "show_contacts", "INTEGER NOT NULL DEFAULT 0")
+addColumn("reviews", "reply", "TEXT")
+addColumn("reviews", "reply_at", "TEXT")
+addColumn("users", "announcements_seen_at", "TEXT")
+addColumn("room_issues", "photo", "TEXT")
+addColumn("places", "latitude", "TEXT")
+addColumn("places", "longitude", "TEXT")
+addColumn("places", "icon", "TEXT")
 
 if (!hasColumn("users", "resident_id")) {
 	const migrateUsers = db.transaction(() => {

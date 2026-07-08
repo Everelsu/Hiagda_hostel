@@ -4,6 +4,7 @@ import { api } from "@/api/client"
 import { useAuthStore } from "@/stores/auth"
 import PlacementModal from "@/components/PlacementModal.vue"
 import Icon from "@/components/Icon.vue"
+import { PageHeader, FilterBar, Field, Input, Select, Button, Stat, Card, EmptyState } from "@/ui"
 
 const auth = useAuthStore()
 const canEdit = auth.can("editor")
@@ -44,28 +45,25 @@ function onSaved() {
 
 <template>
 	<div class="grid">
-		<div>
-			<h1>Свободные места</h1>
-			<p class="muted" style="margin-top: 2px">Кто свободен на выбранный период — для заселения вахты</p>
-		</div>
+		<PageHeader title="Свободные места" subtitle="Кто свободен на выбранный период — для заселения вахты" icon="search" />
 
-		<div class="card row wrap" style="align-items: flex-end">
-			<div class="field" style="margin: 0"><label>С</label><input v-model="from" type="date" style="width: auto" @change="search" /></div>
-			<div class="field" style="margin: 0"><label>По</label><input v-model="to" type="date" style="width: auto" @change="search" /></div>
-			<div class="field" style="margin: 0"><label>Гостиница</label><select v-model="hotelId" style="width: auto" @change="search"><option value="">Все</option><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></select></div>
-			<div class="field" style="margin: 0"><label>Тип</label><select v-model="classId" style="width: auto" @change="search"><option value="">Все</option><option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }}</option></select></div>
-			<button class="btn btn-brand" @click="search">Найти</button>
-		</div>
+		<FilterBar>
+			<Field label="С"><Input v-model="from" type="date" @change="search" /></Field>
+			<Field label="По"><Input v-model="to" type="date" @change="search" /></Field>
+			<Field label="Гостиница"><Select v-model="hotelId" @change="search"><option value="">Все</option><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></Select></Field>
+			<Field label="Тип"><Select v-model="classId" @change="search"><option value="">Все</option><option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }}</option></Select></Field>
+			<Button variant="brand" icon="search" @click="search">Найти</Button>
+		</FilterBar>
 
 		<div v-if="loading" class="muted">Поиск…</div>
 		<template v-else-if="result">
 			<div class="kpis">
-				<div class="kpi accent"><div class="v">{{ result.totals.free_beds }}</div><div class="l">Свободных мест</div></div>
-				<div class="kpi"><div class="v">{{ result.totals.rooms_with_space }}</div><div class="l">Номеров со свободными</div></div>
-				<div class="kpi"><div class="v">{{ result.totals.fully_free_rooms }}</div><div class="l">Полностью свободных</div></div>
+				<Stat :value="result.totals.free_beds" label="Свободных мест" accent />
+				<Stat :value="result.totals.rooms_with_space" label="Номеров со свободными" />
+				<Stat :value="result.totals.fully_free_rooms" label="Полностью свободных" />
 			</div>
 
-			<p v-if="!result.rooms.length" class="card muted">На этот период свободных мест нет.</p>
+			<Card v-if="!result.rooms.length"><EmptyState icon="bed" title="Свободных мест нет" text="На этот период всё занято" /></Card>
 			<div v-for="room in result.rooms" :key="room.room_id" class="card room">
 				<div class="spread">
 					<div>

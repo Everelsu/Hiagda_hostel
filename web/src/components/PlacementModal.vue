@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from "vue"
 import { api, post, put, del } from "@/api/client"
 import { toast } from "@/toast"
 import Modal from "@/components/Modal.vue"
+import { Field, Input, Select, Textarea, Button, confirm } from "@/ui"
 
 const props = defineProps({
 	bed: { type: Object, required: true },
@@ -24,8 +25,10 @@ const stage = ref(props.existing?.stage || "expected")
 const dateFrom = ref(props.existing?.date_from || props.date)
 const dateTo = ref(props.existing?.date_to || props.dateTo || props.date)
 const comment = ref(props.existing?.comment || "")
+const busy = ref(false)
 
 const stageOptions = computed(() => (props.existing ? [stage.value, ...(STAGE_NEXT[props.existing.stage] || [])] : ["expected", "checked_in"]))
+const exactExists = computed(() => suggestions.value.some((s) => s.full_name.trim().toLowerCase() === residentName.value.trim().toLowerCase()))
 
 onMounted(async () => {
 	statuses.value = await api("/statuses")
@@ -51,38 +54,29 @@ async function createResident() {
 	const r = await post("/residents", { full_name: residentName.value.trim() })
 	residentId.value = r.id
 	suggestions.value = []
-	toast("Проживающий создан")
+	toast.success("Проживающий создан")
 }
 
 async function save() {
 	if (stage.value === "cancelled") {
-		if (!confirm("Отменить эту бронь?")) return;
+		if (!(await confirm({ title: "Отменить бронь?", danger: true, confirmLabel: "Отменить бронь" }))) return
 	} else {
-		if (!residentName.value.trim()) {
-			toast("Пожалуйста, введите ФИО проживающего");
-			return;
-		}
-
+		if (!residentName.value.trim()) return toast.error("Введите ФИО проживающего")
 		if (props.existing && props.existing.resident_id) {
 			if (residentName.value.trim() !== (props.existing.resident_name || "")) {
 				try {
-					await api(`/residents/${props.existing.resident_id}`, {
-						method: "PUT",
-						body: JSON.stringify({ full_name: residentName.value.trim() })
-					});
-					toast("Данные проживающего обновлены");
+					await put(`/residents/${props.existing.resident_id}`, { full_name: residentName.value.trim() })
+					toast.success("Данные проживающего обновлены")
 				} catch (e) {
-					toast("Не удалось обновить ФИО: " + e.message);
-					return;
+					return toast.error("Не удалось обновить ФИО: " + e.message)
 				}
 			}
 		} else if (!residentId.value && residentName.value.trim()) {
 			try {
-				const newResident = await post("/residents", { full_name: residentName.value.trim() });
-				residentId.value = newResident.id;
+				const newResident = await post("/residents", { full_name: residentName.value.trim() })
+				residentId.value = newResident.id
 			} catch (e) {
-				toast("Ошибка при создании проживающего: " + e.message);
-				return;
+				return toast.error("Ошибка при создании проживающего: " + e.message)
 			}
 		}
 	}
@@ -95,24 +89,23 @@ async function save() {
 		date_from: dateFrom.value,
 		date_to: dateTo.value,
 		comment: comment.value,
-	};
-
+	}
+	busy.value = true
 	try {
-		if (props.existing) {
-			await api(`/placements/${props.existing.id}`, { method: "PUT", body: JSON.stringify(payload) });
-		} else {
-			await api("/placements", { method: "POST", body: JSON.stringify(payload) });
-		}
-		emit("saved");
+		if (props.existing) await put(`/placements/${props.existing.id}`, payload)
+		else await post("/placements", payload)
+		emit("saved")
 	} catch (e) {
-		toast(e.message);
+		toast.error(e.message)
+	} finally {
+		busy.value = false
 	}
 }
 
 async function remove() {
-	if (!confirm("Удалить это размещение?")) return;
-	await del("/placements/" + props.existing.id);
-	emit("saved");
+	if (!(await confirm({ title: "Удалить размещение?", danger: true, confirmLabel: "Удалить" }))) return
+	await del("/placements/" + props.existing.id)
+	emit("saved")
 }
 </script>
 
@@ -120,9 +113,8 @@ async function remove() {
 	<Modal :title="existing ? 'Размещение' : 'Новое размещение'" @close="emit('close')">
 		<p class="muted" style="margin: 0">{{ bed.label }}</p>
 
-		<div class="field">
-			<label>Проживающий</label>
-			<input v-model="residentName" placeholder="Начните вводить ФИО" @input="onResidentInput" />
+		<Field label="Проживающий">
+			<Input v-model="residentName" placeholder="Начните вводить ФИО" @input="onResidentInput" />
 			<div v-if="suggestions.length || (residentName.trim().length >= 2 && !exactExists && !existing)" class="suggest">
 				<button v-for="s in suggestions" :key="s.id" type="button" class="sug" @click="pick(s)">
 					{{ s.full_name }}<span v-if="s.tab_number" class="muted"> · {{ s.tab_number }}</span>
@@ -131,27 +123,32 @@ async function remove() {
 					+ Создать «{{ residentName.trim() }}»
 				</button>
 			</div>
-		</div>
+		</Field>
 
-		<div class="row wrap">
-			<div class="field grow"><label>Заезд</label><input v-model="dateFrom" type="date" /></div>
-			<div class="field grow"><label>Выезд</label><input v-model="dateTo" type="date" /></div>
+		<div class="two">
+			<Field label="Заезд"><Input v-model="dateFrom" type="date" /></Field>
+			<Field label="Выезд"><Input v-model="dateTo" type="date" /></Field>
 		</div>
-		<div class="row wrap">
-			<div class="field grow"><label>Статус</label><select v-model="statusId"><option v-for="s in statuses" :key="s.id" :value="s.id">{{ s.name }}</option></select></div>
-			<div class="field grow"><label>Стадия брони</label><select v-model="stage"><option v-for="v in stageOptions" :key="v" :value="v">{{ STAGES[v] }}</option></select></div>
+		<div class="two">
+			<Field label="Статус"><Select v-model="statusId"><option v-for="s in statuses" :key="s.id" :value="s.id">{{ s.name }}</option></Select></Field>
+			<Field label="Стадия брони"><Select v-model="stage"><option v-for="v in stageOptions" :key="v" :value="v">{{ STAGES[v] }}</option></Select></Field>
 		</div>
-		<div class="field"><label>Комментарий</label><textarea v-model="comment" rows="2" /></div>
+		<Field label="Комментарий"><Textarea v-model="comment" :rows="2" /></Field>
 
 		<template #foot>
-			<button v-if="existing" class="btn btn-danger" @click="remove">Удалить</button>
-			<button class="btn" @click="emit('close')">Отмена</button>
-			<button class="btn btn-primary" @click="save">Сохранить</button>
+			<Button v-if="existing" variant="danger" @click="remove">Удалить</Button>
+			<Button variant="ghost" @click="emit('close')">Отмена</Button>
+			<Button variant="primary" :loading="busy" @click="save">Сохранить</Button>
 		</template>
 	</Modal>
 </template>
 
 <style scoped>
+.two {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--gap-md);
+}
 .suggest {
 	margin-top: 4px;
 	border: 1px solid var(--color-divider);
@@ -171,6 +168,11 @@ async function remove() {
 	font: inherit;
 	cursor: pointer;
 }
-.sug:hover { background: var(--color-button-bg); }
-.sug.add { color: var(--color-green); font-weight: 700; }
+.sug:hover {
+	background: var(--color-button-bg);
+}
+.sug.add {
+	color: var(--color-green);
+	font-weight: 700;
+}
 </style>

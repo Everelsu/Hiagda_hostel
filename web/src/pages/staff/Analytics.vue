@@ -4,6 +4,7 @@ import { api, del } from "@/api/client"
 import { useAuthStore } from "@/stores/auth"
 import Stars from "@/components/Stars.vue"
 import Icon from "@/components/Icon.vue"
+import { PageHeader, Select, Stat } from "@/ui"
 
 const auth = useAuthStore()
 const canEdit = auth.can("editor")
@@ -75,19 +76,17 @@ function dm(date) {
 <template>
 	<div v-if="!d" class="muted">Загрузка…</div>
 	<div v-else class="grid">
-		<div class="spread">
-			<div>
-				<h1>Аналитика</h1>
-				<p class="muted" style="margin-top: 2px">Загрузка и движение фонда · на {{ d.date }}</p>
-			</div>
-			<select v-model="hotelId" style="width: auto" @change="load"><option value="">Все гостиницы</option><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></select>
-		</div>
+		<PageHeader title="Аналитика" :subtitle="`Загрузка и движение фонда · на ${d.date}`" icon="bar-chart">
+			<template #actions>
+				<Select v-model="hotelId" @change="load"><option value="">Все гостиницы</option><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></Select>
+			</template>
+		</PageHeader>
 
 		<div class="kpis">
-			<div class="kpi accent"><div class="v">{{ d.totals.load }}%</div><div class="l">Загрузка сегодня</div></div>
-			<div class="kpi"><div class="v">{{ d.totals.occupied }}</div><div class="l">Занято мест</div></div>
-			<div class="kpi"><div class="v">{{ d.totals.free }}</div><div class="l">Свободно</div></div>
-			<div class="kpi"><div class="v">{{ d.totals.bedNights }}</div><div class="l">Койко-ночей (30 дн.)</div></div>
+			<Stat :value="d.totals.load + '%'" label="Загрузка сегодня" accent />
+			<Stat :value="d.totals.occupied" label="Занято мест" />
+			<Stat :value="d.totals.free" label="Свободно" />
+			<Stat :value="d.totals.bedNights" label="Койко-ночей (30 дн.)" />
 		</div>
 
 		<div class="card">

@@ -38,14 +38,19 @@ const tx = db.transaction(() => {
 	if (db.prepare("SELECT COUNT(*) c FROM hotels").get().c === 0) {
 		const hotelId = db
 			.prepare(
-				"INSERT INTO hotels (name, location, settlement, address, phone, description, rules) VALUES (?,?,?,?,?,?,?)",
+				"INSERT INTO hotels (name, location, settlement, address, phone, email, check_in, check_out, latitude, longitude, description, rules) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
 			)
 			.run(
 				"Вахтовый дом №1",
-				"Бурятия",
+				"Забайкальский край",
 				"п. Вершино-Дарасунский",
 				"ул. Рудничная, 4",
 				"+7 (3012) 00-00-00",
+				"dom1@hiagda.example",
+				"14:00",
+				"12:00",
+				"52.3618",
+				"115.5122",
 				"Дом компании для вахтового персонала на период работ. Размещение по сменам, питание в столовой на первом этаже.",
 				"Тишина после 23:00. Курение только в отведённых местах. Уборка по графику.",
 			).lastInsertRowid
@@ -54,10 +59,14 @@ const tx = db.transaction(() => {
 		const haIns = db.prepare("INSERT OR IGNORE INTO hotel_amenities (hotel_id, amenity_id) VALUES (?,?)")
 		for (const a of hotelAmen) haIns.run(hotelId, a.id)
 
-		const placeIns = db.prepare("INSERT INTO places (hotel_id, name, kind, note, distance) VALUES (?,?,?,?,?)")
-		placeIns.run(hotelId, "Столовая «Смена»", "Питание", "Завтрак 7:00–9:00, обед 13:00–15:00, ужин 19:00–21:00", "1 этаж")
-		placeIns.run(hotelId, "Магазин «Продукты»", "Магазин", "Круглосуточно", "200 м")
-		placeIns.run(hotelId, "Медпункт", "Медицина", "Дежурный фельдшер", "соседний корпус")
+		const placeIns = db.prepare("INSERT INTO places (hotel_id, name, kind, note, distance, latitude, longitude) VALUES (?,?,?,?,?,?,?)")
+		placeIns.run(hotelId, "Столовая «Смена»", "Питание", "Завтрак 7:00–9:00, обед 13:00–15:00, ужин 19:00–21:00", "1 этаж", "52.3620", "115.5125")
+		placeIns.run(hotelId, "Магазин «Продукты»", "Магазин", "Круглосуточно", "200 м", "52.3630", "115.5140")
+		placeIns.run(hotelId, "Медпункт", "Медицина", "Дежурный фельдшер", "соседний корпус", "52.3612", "115.5110")
+
+		const infoIns = db.prepare("INSERT INTO hotel_info_sections (hotel_id, kind, title, body, sort) VALUES (?,?,?,?,?)")
+		infoIns.run(hotelId, "schedule", "Распорядок дня", "Подъём 6:30\nЗавтрак 7:00–9:00\nВыезд на смену 8:00\nУжин 19:00–21:00\nБаня по чётным дням 18:00–22:00", 0)
+		infoIns.run(hotelId, "contacts", "Полезные телефоны", "Комендант: +7 900 000-00-01\nМедпункт: +7 900 000-00-02\nДиспетчер транспорта: +7 900 000-00-03\nОхрана: +7 900 000-00-04", 1)
 
 		const classes = db.prepare("SELECT * FROM room_classes ORDER BY id").all()
 		const roomAmen = db.prepare("SELECT id FROM amenities WHERE scope IN ('room','both')").all()
@@ -102,6 +111,21 @@ const tx = db.transaction(() => {
 			proResId,
 		)
 		console.log("Создан демо-пользователь (Просмотр): логин vahta / пароль vahta")
+
+		const adminId = db.prepare("INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,'admin')").run(
+			"admin",
+			bcrypt.hashSync("admin", 10),
+			"Администратор",
+		).lastInsertRowid
+		console.log("Создан администратор: логин admin / пароль admin")
+
+		const annIns = db.prepare("INSERT INTO announcements (hotel_id, title, body, pinned, created_by) VALUES (?,?,?,?,?)")
+		annIns.run(null, "Добро пожаловать в NochOtel", "Здесь появляются объявления коменданта: отключения воды, график бани, выезды транспорта.", 1, adminId)
+		annIns.run(hotelId, "Плановое отключение горячей воды", "18 числа с 10:00 до 16:00 в доме №1 не будет горячей воды. Приносим извинения.", 0, adminId)
+
+		db.prepare("INSERT INTO reviews (hotel_id, resident_id, rating, text) VALUES (?,?,?,?)").run(
+			hotelId, neighborId, 4, "Тепло, чисто, столовая рядом. Wi-Fi иногда пропадает.",
+		)
 	}
 })
 

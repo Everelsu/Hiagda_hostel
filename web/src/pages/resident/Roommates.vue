@@ -1,6 +1,8 @@
 <script setup>
 import { ref, onMounted } from "vue"
 import { useOverview } from "@/api/me"
+import Icon from "@/components/Icon.vue"
+import { PageHeader, Card, ListRow, Avatar, EmptyState } from "@/ui"
 
 const { load } = useOverview()
 const data = ref(null)
@@ -11,48 +13,29 @@ onMounted(async () => {
 
 <template>
 	<div class="grid" v-if="data">
-		<router-link to="/me" class="back">‹ Назад</router-link>
-		<h1>Соседи по комнате</h1>
+		<PageHeader title="Соседи по комнате" icon="users" :back="'/me'" />
 
-		<div class="card">
-			<p v-if="!data.roommates.length" class="muted">Вы живёте один.</p>
-			<div v-else class="grid" style="gap: var(--gap-sm)">
-				<div v-for="r in data.roommates" :key="r.id" class="roommate">
-					<div class="avatar">{{ r.full_name.charAt(0) }}</div>
-					<div class="grow">
-						<div class="contrast" style="font-weight: 700">{{ r.full_name }}</div>
-						<div class="muted" style="font-size: var(--font-size-sm)">{{ [r.position, r.company].filter(Boolean).join(" · ") || "—" }} · {{ r.bed_label }}</div>
-						<div v-if="r.about" class="muted" style="font-size: var(--font-size-sm); margin-top: 2px">{{ r.about }}</div>
-					</div>
-				</div>
-			</div>
+		<Card v-if="!data.roommates.length"><EmptyState icon="users" title="Вы живёте один" text="В комнате пока нет других жильцов" /></Card>
+		<div v-else class="grid" style="gap: var(--gap-sm)">
+			<ListRow v-for="r in data.roommates" :key="r.id">
+				<template #lead><Avatar :src="r.photo" :name="r.full_name" size="2.8rem" /></template>
+				<template #title>{{ r.full_name }}</template>
+				<template #sub>
+					{{ [r.position, r.company].filter(Boolean).join(" · ") || "—" }} · {{ r.bed_label }}
+					<span v-if="r.about" style="display: block">{{ r.about }}</span>
+					<a v-if="r.phone" :href="`tel:${r.phone}`" class="phone"><Icon name="phone" size="0.9em" /> {{ r.phone }}</a>
+				</template>
+			</ListRow>
 		</div>
 	</div>
 </template>
 
 <style scoped>
-.back {
-	font-weight: 700;
-	color: var(--color-secondary);
-}
-.roommate {
-	display: flex;
-	gap: var(--gap-md);
+.phone {
+	display: inline-flex;
 	align-items: center;
-	padding: var(--gap-sm) var(--gap-md);
-	background: var(--color-bg);
-	border: 1px solid var(--color-divider);
-	border-radius: var(--radius-md);
-}
-.avatar {
-	width: 2.4rem;
-	height: 2.4rem;
-	border-radius: var(--radius-max);
-	background: var(--color-brand-highlight);
-	color: var(--color-brand);
-	display: grid;
-	place-items: center;
-	font-weight: 800;
-	flex-shrink: 0;
+	gap: 4px;
+	margin-top: 4px;
+	font-weight: 600;
 }
 </style>

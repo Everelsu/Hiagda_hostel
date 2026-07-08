@@ -54,3 +54,10 @@ export const get = (p) => api(p)
 export const post = (p, body) => api(p, { method: "POST", body: JSON.stringify(body) })
 export const put = (p, body) => api(p, { method: "PUT", body: JSON.stringify(body) })
 export const del = (p) => api(p, { method: "DELETE" })
+
+export async function uploadFile(file) {
+	const fd = new FormData()
+	fd.append("file", file)
+	const r = await api("/upload", { method: "POST", body: fd })
+	return r.url
+}
