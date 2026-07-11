@@ -124,13 +124,13 @@ async function sendIssue() {
 .big-room {
 	text-align: center;
 	padding: var(--gap-md) var(--gap-xl);
-	background: var(--color-green-bg);
+	background: var(--color-brand-highlight);
 	border-radius: var(--radius-lg);
 }
 .room-no {
 	font-size: 2.6rem;
 	font-weight: 800;
-	color: var(--color-green);
+	color: var(--color-brand);
 	line-height: 1.1;
 }
 .amenities {

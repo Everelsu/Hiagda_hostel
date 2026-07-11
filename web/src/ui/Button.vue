@@ -74,9 +74,9 @@ const cls = computed(() => ["k-btn", `k-btn--${props.variant}`, `k-btn--${props.
 	width: 100%;
 }
 .k-btn--primary {
-	background: var(--color-green);
-	border-color: var(--color-green);
-	color: #04150b;
+	background: var(--color-brand);
+	border-color: var(--color-brand);
+	color: var(--color-accent-contrast);
 }
 .k-btn--brand {
 	background: var(--color-brand-highlight);

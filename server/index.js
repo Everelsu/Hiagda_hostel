@@ -24,7 +24,8 @@ const imagesFor = (ownerType, ownerId) =>
 	db.prepare("SELECT id, url FROM images WHERE owner_type = ? AND owner_id = ? ORDER BY sort, id").all(ownerType, ownerId)
 
 const TRANSLIT = { а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "c", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya" }
-const translit = (s) => (s || "").toLowerCase().split("").map((c) => (c in TRANSLIT ? TRANSLIT[c] : c)).join("").replace(/[^a-z0-9]/g, "")
+const CYRILLIC_TRANSLIT = { а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "c", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya" }
+const translit = (s) => (s || "").toLowerCase().split("").map((c) => (c in CYRILLIC_TRANSLIT ? CYRILLIC_TRANSLIT[c] : c in TRANSLIT ? TRANSLIT[c] : c)).join("").replace(/[^a-z0-9]/g, "")
 function genUsername(resident) {
 	let base = resident.tab_number ? translit(resident.tab_number) : ""
 	if (!base) {
@@ -1192,7 +1193,7 @@ api.get("/availability", (req, res) => {
 			 JOIN hotels h ON h.id = rm.hotel_id
 			 LEFT JOIN room_classes c ON c.id = rm.class_id
 			 WHERE NOT EXISTS (
-				SELECT 1 FROM placements p WHERE p.bed_id = b.id AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ?
+				SELECT 1 FROM placements p WHERE p.bed_id = b.id AND p.stage <> 'cancelled' AND p.date_from < ? AND p.date_to > ?
 			 )
 			 AND NOT EXISTS (
 				SELECT 1 FROM room_blocks rb WHERE rb.room_id = rm.id AND rb.date_from <= ? AND rb.date_to >= ?
@@ -1283,13 +1284,32 @@ api.post("/residents", requireRole("editor"), (req, res) => {
 })
 api.put("/residents/:id", requireRole("editor"), (req, res) => {
 	const { full_name, tab_number, company, position, phone, note } = req.body || {}
+	const current = db.prepare("SELECT * FROM residents WHERE id = ?").get(req.params.id)
+	if (!current) return res.status(404).json({ error: "Проживающий не найден" })
+	const nextName = full_name !== undefined ? String(full_name).trim() : current.full_name
+	if (!nextName) return res.status(400).json({ error: "Укажите ФИО" })
 	db.prepare(
 		"UPDATE residents SET full_name=?, tab_number=?, company=?, position=?, phone=?, note=? WHERE id=?",
-	).run(full_name, tab_number || null, company || null, position || null, phone || null, note || null, req.params.id)
+	).run(
+		nextName,
+		tab_number !== undefined ? tab_number || null : current.tab_number,
+		company !== undefined ? company || null : current.company,
+		position !== undefined ? position || null : current.position,
+		phone !== undefined ? phone || null : current.phone,
+		note !== undefined ? note || null : current.note,
+		req.params.id,
+	)
+	db.prepare("UPDATE users SET full_name = ? WHERE resident_id = ? AND role = 'viewer'").run(nextName, req.params.id)
 	res.json({ ok: true })
 })
 api.delete("/residents/:id", requireRole("editor"), (req, res) => {
-	db.prepare("DELETE FROM residents WHERE id = ?").run(req.params.id)
+	const removeResident = db.transaction((id) => {
+		db.prepare("DELETE FROM users WHERE resident_id = ? AND role = 'viewer'").run(id)
+		db.prepare("DELETE FROM reviews WHERE resident_id = ?").run(id)
+		db.prepare("DELETE FROM placements WHERE resident_id = ?").run(id)
+		db.prepare("DELETE FROM residents WHERE id = ?").run(id)
+	})
+	removeResident(req.params.id)
 	res.json({ ok: true })
 })
 
@@ -1314,6 +1334,38 @@ api.get("/placements", (req, res) => {
 	res.json(db.prepare(`${placementSelect} ${where} ORDER BY p.date_from`).all(...args))
 })
 
+api.get("/rack", (req, res) => {
+	const { hotel_id, from, to } = req.query
+	if (!hotel_id || !from || !to) return res.status(400).json({ error: "Укажите гостиницу и период" })
+	const rooms = db
+		.prepare(
+			`SELECT r.id, r.number, r.floor, c.name AS class_name
+			 FROM rooms r LEFT JOIN room_classes c ON c.id = r.class_id
+			 WHERE r.hotel_id = ? ORDER BY r.floor, r.number`,
+		)
+		.all(hotel_id)
+	const bedsStmt = db.prepare("SELECT id, label FROM beds WHERE room_id = ? ORDER BY id")
+	for (const room of rooms) room.beds = bedsStmt.all(room.id)
+	const placements = db
+		.prepare(
+			`${placementSelect}
+			 JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
+			 WHERE rm.hotel_id = ? AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ?
+			 ORDER BY p.date_from`,
+		)
+		.all(hotel_id, to, from)
+	const blocks = db
+		.prepare(
+			`SELECT rb.id, rb.room_id, rb.date_from, rb.date_to, rb.reason
+			 FROM room_blocks rb JOIN rooms rm ON rm.id = rb.room_id
+			 WHERE rm.hotel_id = ? AND rb.date_from <= ? AND rb.date_to >= ?`,
+		)
+		.all(hotel_id, to, from)
+	res.json({ rooms, placements, blocks })
+})
+
+// Пересечение считаем по «полудням»: день выезда свободен для нового заезда (пересменка).
+// Брони [a1,a2] и [b1,b2] конфликтуют ⟺ a1 < b2 И b1 < a2. Отменённые не блокируют.
 function findConflict(bedId, from, to, excludeId) {
 	return db
 		.prepare(
@@ -1321,15 +1373,32 @@ function findConflict(bedId, from, to, excludeId) {
 			 FROM placements p
 			 JOIN statuses s ON s.id = p.status_id
 			 LEFT JOIN residents r ON r.id = p.resident_id
-			 WHERE p.bed_id = ? AND p.id <> ? AND p.date_from <= ? AND p.date_to >= ?
+			 WHERE p.bed_id = ? AND p.id <> ? AND p.stage <> 'cancelled' AND p.date_from < ? AND p.date_to > ?
 			 LIMIT 1`,
 		)
 		.get(bedId, excludeId || 0, to, from)
 }
 
+// Ремонт [X,Y] делает номер недоступным по ночь Y включительно.
+function findBlock(bedId, from, to) {
+	return db
+		.prepare(
+			`SELECT rb.date_from, rb.date_to, rb.reason
+			 FROM room_blocks rb
+			 JOIN beds b ON b.room_id = rb.room_id
+			 WHERE b.id = ? AND rb.date_from <= ? AND rb.date_to >= ?
+			 LIMIT 1`,
+		)
+		.get(bedId, to, from)
+}
+
 api.post("/placements", requireRole("editor"), (req, res) => {
 	const { bed_id, resident_id, status_id, date_from, date_to, comment } = req.body || {}
 	const stage = req.body?.stage || "expected"
+	if (stage !== "cancelled" && !resident_id) return res.status(400).json({ error: "Выберите или создайте профиль вахтовика" })
+	if (resident_id && !db.prepare("SELECT id FROM residents WHERE id = ?").get(resident_id)) {
+		return res.status(400).json({ error: "Профиль вахтовика не найден" })
+	}
 	if (!bed_id || !status_id || !date_from || !date_to) {
 		return res.status(400).json({ error: "Заполните место, статус и даты" })
 	}
@@ -1340,6 +1409,10 @@ api.post("/placements", requireRole("editor"), (req, res) => {
 		return res.status(409).json({
 			error: `Место занято: ${conflict.who} (${conflict.date_from} – ${conflict.date_to})`,
 		})
+	}
+	const block = findBlock(bed_id, date_from, date_to)
+	if (block) {
+		return res.status(409).json({ error: `Номер на ремонте: ${block.date_from} – ${block.date_to}${block.reason ? ` · ${block.reason}` : ""}` })
 	}
 	const info = db
 		.prepare("INSERT INTO placements (bed_id, resident_id, status_id, stage, date_from, date_to, comment) VALUES (?,?,?,?,?,?,?)")
@@ -1353,6 +1426,10 @@ api.put("/placements/:id", requireRole("editor"), (req, res) => {
 	const current = db.prepare("SELECT bed_id, stage FROM placements WHERE id = ?").get(req.params.id)
 	if (!current) return res.status(404).json({ error: "Размещение не найдено" })
 	const stage = req.body?.stage || current.stage
+	if (stage !== "cancelled" && !resident_id) return res.status(400).json({ error: "Выберите или создайте профиль вахтовика" })
+	if (resident_id && !db.prepare("SELECT id FROM residents WHERE id = ?").get(resident_id)) {
+		return res.status(400).json({ error: "Профиль вахтовика не найден" })
+	}
 	if (!STAGES.includes(stage)) return res.status(400).json({ error: "Неизвестная стадия брони" })
 	if (!canTransition(current.stage, stage)) {
 		return res.status(409).json({ error: "Недопустимый переход стадии брони" })
@@ -1362,6 +1439,10 @@ api.put("/placements/:id", requireRole("editor"), (req, res) => {
 		return res.status(409).json({
 			error: `Место занято: ${conflict.who} (${conflict.date_from} – ${conflict.date_to})`,
 		})
+	}
+	if (stage !== "cancelled") {
+		const block = findBlock(current.bed_id, date_from, date_to)
+		if (block) return res.status(409).json({ error: `Номер на ремонте: ${block.date_from} – ${block.date_to}${block.reason ? ` · ${block.reason}` : ""}` })
 	}
 	db.prepare("UPDATE placements SET resident_id=?, status_id=?, stage=?, date_from=?, date_to=?, comment=? WHERE id=?").run(
 		resident_id || null,

@@ -59,9 +59,9 @@ h4 {
 	cursor: not-allowed;
 }
 .btn-primary {
-	background: var(--color-green);
-	border-color: var(--color-green);
-	color: #04150b;
+	background: var(--color-brand);
+	border-color: var(--color-brand);
+	color: var(--color-accent-contrast);
 }
 .btn-brand {
 	background: var(--color-brand-highlight);
@@ -188,8 +188,8 @@ label {
 	width: 1rem;
 	height: 1rem;
 	border-radius: var(--radius-max);
-	background: var(--color-green);
-	box-shadow: 0 0 14px rgba(27, 217, 106, 0.45);
+	background: var(--color-brand);
+	box-shadow: 0 0 14px var(--color-brand-highlight);
 }
 
 /* Тосты */

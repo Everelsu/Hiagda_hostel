@@ -98,10 +98,26 @@ const hotelPickMarkers = computed(() => {
 	if (!m || !m.latitude || !m.longitude) return []
 	return [{ id: "h", lat: m.latitude, lng: m.longitude, color: "#c78aff" }]
 })
+const placePickMarkers = computed(() => {
+	const m = hotelModal.value
+	if (!m) return []
+	const markers = []
+	if (m.latitude && m.longitude) markers.push({ id: "hotel", lat: m.latitude, lng: m.longitude, color: "#c78aff", title: m.name || "Гостиница" })
+	for (const p of m.places || []) {
+		if (p.latitude && p.longitude) markers.push({ id: "place-" + p.id, lat: p.latitude, lng: p.longitude, color: "#4f9cff", title: p.name })
+	}
+	if (m._placeLat && m._placeLng) markers.push({ id: "draft-place", lat: m._placeLat, lng: m._placeLng, color: "#1bd96a", title: m._placeName || "Новая точка" })
+	return markers
+})
 function pickHotel(e) {
 	if (!hotelModal.value) return
 	hotelModal.value.latitude = e.lat.toFixed(6)
 	hotelModal.value.longitude = e.lng.toFixed(6)
+}
+function pickPlace(e) {
+	if (!hotelModal.value) return
+	hotelModal.value._placeLat = e.lat.toFixed(6)
+	hotelModal.value._placeLng = e.lng.toFixed(6)
 }
 
 async function addPlace(m) {
@@ -301,6 +317,17 @@ onMounted(async () => {
 
 			<template v-else-if="hotelTab === 'places'">
 				<div v-for="p in hotelModal.places" :key="p.id" class="li"><span class="grow">{{ p.name }} <span class="muted">{{ p.distance }}</span><span v-if="p.latitude" class="muted" style="font-size: var(--font-size-xs)"> · на карте</span></span><IconButton icon="x" label="Удалить" size="sm" variant="danger" @click="removePlace(hotelModal, p)" /></div>
+				<Field label="Точка рядом на карте (клик)">
+					<MapView
+						:markers="placePickMarkers"
+						:center="hotelModal._placeLat && hotelModal._placeLng ? [Number(hotelModal._placeLat), Number(hotelModal._placeLng)] : hotelModal.latitude && hotelModal.longitude ? [Number(hotelModal.latitude), Number(hotelModal.longitude)] : [52.36, 115.51]"
+						:zoom="hotelModal.latitude ? 15 : 12"
+						:fit="false"
+						click-to-pick
+						height="220px"
+						@pick="pickPlace"
+					/>
+				</Field>
 				<div class="row wrap" style="margin-top: var(--gap-sm)">
 					<Input v-model="hotelModal._placeName" placeholder="Название" style="min-width: 120px" />
 					<Input v-model="hotelModal._placeKind" placeholder="Тип (Питание…)" style="width: 130px" />

@@ -115,14 +115,14 @@ function fmt(d) {
 .big-room {
 	text-align: center;
 	padding: var(--gap-md) var(--gap-lg);
-	background: var(--color-green-bg);
+	background: var(--color-brand-highlight);
 	border-radius: var(--radius-lg);
 	min-width: 120px;
 }
 .room-no {
 	font-size: 2.2rem;
 	font-weight: 800;
-	color: var(--color-green);
+	color: var(--color-brand);
 	line-height: 1.1;
 }
 .bed {
