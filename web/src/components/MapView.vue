@@ -17,6 +17,7 @@ const emit = defineEmits(["select", "pick"])
 const el = ref(null)
 let map = null
 let layer = null
+let resizeObs = null
 const markerById = new Map()
 
 function makeIcon(color, selected = false) {
@@ -73,13 +74,20 @@ onMounted(async () => {
 	await nextTick()
 	map = L.map(el.value, { scrollWheelZoom: true }).setView(props.center, props.zoom)
 	map.attributionControl.setPrefix(false)
-	L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-		maxZoom: 19,
-		attribution: "© OpenStreetMap",
+	L.tileLayer("https://tile{s}.maps.2gis.com/tiles?x={x}&y={y}&z={z}&v=1", {
+		subdomains: ["0", "1", "2", "3"],
+		maxZoom: 18,
+		attribution: "© 2ГИС",
 	}).addTo(map)
 	if (props.clickToPick) map.on("click", (e) => emit("pick", { lat: e.latlng.lat, lng: e.latlng.lng }))
 	render()
+	// Стабильная отрисовка: пересчитываем размер, когда контейнер реально получил габариты
 	setTimeout(() => map?.invalidateSize(), 150)
+	setTimeout(() => map?.invalidateSize(), 600)
+	if (typeof ResizeObserver !== "undefined") {
+		resizeObs = new ResizeObserver(() => map?.invalidateSize())
+		resizeObs.observe(el.value)
+	}
 })
 
 watch(() => props.markers, render, { deep: true })
@@ -95,6 +103,10 @@ watch(() => [props.center, props.zoom], () => {
 }, { deep: true })
 
 onBeforeUnmount(() => {
+	if (resizeObs) {
+		resizeObs.disconnect()
+		resizeObs = null
+	}
 	if (map) {
 		map.remove()
 		map = null

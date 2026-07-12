@@ -1,6 +1,6 @@
 {
-	"name": "NochOtel — кабинет вахтовика",
-	"short_name": "NochOtel",
+	"name": "Хиагда — кабинет вахтовика",
+	"short_name": "Хиагда",
 	"description": "Учёт номерного фонда вахтовых гостиниц",
 	"start_url": "/me",
 	"scope": "/",

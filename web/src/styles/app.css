@@ -117,6 +117,70 @@ label {
 	margin-bottom: var(--gap-md);
 }
 
+/* Убираем «виндовость» нативных контролов, приводим к единому виду */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+	appearance: none;
+	-webkit-appearance: none;
+	min-height: var(--control-h-md);
+}
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+	cursor: pointer;
+	opacity: 0.65;
+}
+:root[data-theme="dark"] input[type="date"]::-webkit-calendar-picker-indicator,
+:root[data-theme="dark"] input[type="time"]::-webkit-calendar-picker-indicator {
+	filter: invert(1);
+	opacity: 0.6;
+}
+input[type="file"] {
+	font-size: var(--font-size-sm);
+	color: var(--color-secondary);
+}
+input[type="file"]::file-selector-button {
+	appearance: none;
+	-webkit-appearance: none;
+	margin-right: var(--gap-sm);
+	padding: var(--gap-xs) var(--gap-md);
+	border-radius: var(--radius-md);
+	border: 1px solid var(--color-button-border);
+	background: var(--color-button-bg);
+	color: var(--color-base);
+	font: inherit;
+	font-size: var(--font-size-xs);
+	font-weight: var(--font-weight-bold);
+	cursor: pointer;
+}
+input[type="file"]::file-selector-button:hover {
+	border-color: var(--color-brand);
+}
+input[type="color"] {
+	appearance: none;
+	-webkit-appearance: none;
+	width: 2.75rem;
+	height: var(--control-h-md);
+	padding: 3px;
+	border-radius: var(--radius-md);
+	border: 1px solid var(--color-button-border);
+	background: var(--color-bg);
+	cursor: pointer;
+}
+input[type="color"]::-webkit-color-swatch-wrapper {
+	padding: 0;
+}
+input[type="color"]::-webkit-color-swatch {
+	border: none;
+	border-radius: var(--radius-sm);
+}
+input[type="checkbox"],
+input[type="radio"] {
+	accent-color: var(--color-brand);
+	width: auto;
+	cursor: pointer;
+}
+
 /* Карточки */
 .card {
 	background: var(--color-raised-bg);

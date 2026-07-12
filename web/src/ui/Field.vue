@@ -14,9 +14,7 @@ defineProps({ label: String, hint: String, error: String })
 <style scoped>
 .k-field {
 	display: block;
-}
-.k-field + .k-field {
-	margin-top: var(--gap-md);
+	min-width: 0;
 }
 .k-field__label {
 	display: block;

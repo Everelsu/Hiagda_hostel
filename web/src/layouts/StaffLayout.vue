@@ -45,7 +45,7 @@ watch(() => route.path, () => {
 <template>
 	<div class="shell">
 		<aside class="sidebar" :class="{ open: mobileOpen }">
-			<div class="brand-mark sidebar__brand"><span class="dot" /> NochOtel</div>
+			<div class="brand-mark sidebar__brand"><span class="dot" /> Хиагда</div>
 			<nav class="nav">
 				<template v-for="g in groups" :key="g.heading">
 					<div class="nav__heading">{{ g.heading }}</div>
@@ -83,7 +83,9 @@ watch(() => route.path, () => {
 .shell {
 	display: grid;
 	grid-template-columns: 240px 1fr;
-	min-height: 100vh;
+	height: 100vh;
+	height: 100dvh;
+	overflow: hidden;
 }
 .sidebar {
 	background: var(--color-raised-bg);
@@ -150,6 +152,8 @@ watch(() => route.path, () => {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
+	height: 100%;
+	overflow: hidden;
 }
 .topbar {
 	position: sticky;
@@ -172,6 +176,8 @@ watch(() => route.path, () => {
 	flex: 1;
 }
 .content {
+	flex: 1;
+	min-height: 0;
 	padding: var(--gap-xl);
 	overflow: auto;
 }

@@ -147,7 +147,7 @@ function printCreds() {
 		.map((c) => `<div class="slip"><div class="n">${c.full_name}</div><div>Логин: <b>${c.username}</b></div><div>Пароль: <b>${c.password}</b></div><div class="hint">Смените пароль при первом входе.</div></div>`)
 		.join("")
 	const w = window.open("", "_blank")
-	w.document.write(`<html><head><title>Реквизиты доступа</title><style>body{font-family:sans-serif;padding:20px}.slip{border:1px dashed #888;border-radius:8px;padding:14px 18px;margin:0 0 12px;max-width:360px}.n{font-weight:700;font-size:18px;margin-bottom:6px}.hint{color:#888;font-size:12px;margin-top:6px}b{font-size:16px}@media print{.slip{page-break-inside:avoid}}</style></head><body><h2>Реквизиты доступа · NochOtel</h2>${rows}<script>window.print()<\/script></body></html>`)
+	w.document.write(`<html><head><title>Реквизиты доступа</title><style>body{font-family:sans-serif;padding:20px}.slip{border:1px dashed #888;border-radius:8px;padding:14px 18px;margin:0 0 12px;max-width:360px}.n{font-weight:700;font-size:18px;margin-bottom:6px}.hint{color:#888;font-size:12px;margin-top:6px}b{font-size:16px}@media print{.slip{page-break-inside:avoid}}</style></head><body><h2>Реквизиты доступа · Хиагда</h2>${rows}<script>window.print()<\/script></body></html>`)
 	w.document.close()
 }
 

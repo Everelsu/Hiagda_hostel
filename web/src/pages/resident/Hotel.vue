@@ -50,8 +50,11 @@ const hasMap = computed(() => mapMarkers.value.length > 0)
 function fmt(d) {
 	return d ? new Date(d.replace(" ", "T") + "Z").toLocaleDateString("ru-RU", { dateStyle: "medium" }) : ""
 }
-function openYandex(lat, lng) {
-	window.open(`https://yandex.ru/maps/?pt=${lng},${lat}&z=16&l=map`, "_blank", "noopener")
+function routeYandex(lat, lng) {
+	window.open(`https://yandex.ru/maps/?rtext=~${lat},${lng}&rtt=auto&z=15`, "_blank", "noopener")
+}
+function route2gis(lat, lng) {
+	window.open(`https://2gis.ru/routeSearch/rsType/car/to/${lng},${lat}`, "_blank", "noopener")
 }
 function selectPlace(place) {
 	if (place.latitude && place.longitude) selectedMarkerId.value = "place-" + place.id
@@ -111,7 +114,10 @@ async function submitReview() {
 			<div v-if="hasMap" class="card map-section">
 				<div class="spread">
 					<div class="section-title"><Icon name="map-pin" /> На карте</div>
-					<Button v-if="hotel.latitude && hotel.longitude" size="sm" icon="map-pin" @click="openYandex(hotel.latitude, hotel.longitude)">Открыть маршрут</Button>
+					<div v-if="hotel.latitude && hotel.longitude" class="row" style="gap: var(--gap-sm)">
+						<Button size="sm" icon="navigation" @click="route2gis(hotel.latitude, hotel.longitude)">2ГИС</Button>
+						<Button size="sm" icon="navigation" @click="routeYandex(hotel.latitude, hotel.longitude)">Яндекс</Button>
+					</div>
 				</div>
 				<MapView :markers="mapMarkers" :selected-id="selectedMarkerId" height="320px" @select="selectedMarkerId = $event" />
 			</div>

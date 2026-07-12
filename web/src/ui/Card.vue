@@ -1,9 +1,9 @@
 <script setup>
-defineProps({ title: String, subtitle: String, pad: { type: String, default: "lg" }, interactive: Boolean })
+defineProps({ title: String, subtitle: String, pad: { type: String, default: "lg" }, interactive: Boolean, stack: Boolean })
 </script>
 
 <template>
-	<div class="k-card" :class="[`k-card--${pad}`, { 'k-card--interactive': interactive }]">
+	<div class="k-card" :class="[`k-card--${pad}`, { 'k-card--interactive': interactive, 'k-card--stack': stack }]">
 		<header v-if="title || $slots.actions" class="k-card__head">
 			<div class="k-card__titles">
 				<h3 v-if="title" class="k-card__title">{{ title }}</h3>
@@ -30,6 +30,14 @@ defineProps({ title: String, subtitle: String, pad: { type: String, default: "lg
 }
 .k-card--sm {
 	padding: var(--gap-md);
+}
+.k-card--stack {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-md);
+}
+.k-card--stack .k-card__head {
+	margin-bottom: 0;
 }
 .k-card--interactive {
 	transition: border-color var(--speed-fast), transform var(--speed-fast);

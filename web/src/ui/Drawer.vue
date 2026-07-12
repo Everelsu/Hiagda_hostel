@@ -83,6 +83,9 @@ onUnmounted(() => {
 	flex: 1;
 	overflow: auto;
 	padding: var(--gap-xl);
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-md);
 }
 .k-drawer__foot {
 	display: flex;

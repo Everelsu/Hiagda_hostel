@@ -3,7 +3,7 @@ import { ref, onMounted, computed } from "vue"
 import { api, post, put, del } from "@/api/client"
 import { toast } from "@/toast"
 import Modal from "@/components/Modal.vue"
-import { Field, Input, Select, Textarea, Button, confirm } from "@/ui"
+import { Field, Input, Select, Textarea, Button, Avatar, Chip, confirm } from "@/ui"
 
 const props = defineProps({
 	bed: { type: Object, required: true },
@@ -17,8 +17,8 @@ const STAGES = { expected: "Ожидается", checked_in: "Проживает
 const STAGE_NEXT = { expected: ["checked_in", "cancelled"], checked_in: ["checked_out", "cancelled"], checked_out: ["checked_in"], cancelled: ["expected"] }
 
 const statuses = ref([])
-const residentName = ref(props.existing?.resident_name || "")
-const residentId = ref(props.existing?.resident_id || null)
+const selected = ref(props.existing?.resident_id ? { id: props.existing.resident_id, full_name: props.existing.resident_name } : null)
+const query = ref("")
 const suggestions = ref([])
 const statusId = ref(props.existing?.status_id || null)
 const stage = ref(props.existing?.stage || "expected")
@@ -28,62 +28,62 @@ const comment = ref(props.existing?.comment || "")
 const busy = ref(false)
 
 const stageOptions = computed(() => (props.existing ? [stage.value, ...(STAGE_NEXT[props.existing.stage] || [])] : ["expected", "checked_in"]))
-const exactExists = computed(() => suggestions.value.some((s) => s.full_name.trim().toLowerCase() === residentName.value.trim().toLowerCase()))
+const canCreate = computed(() => {
+	const q = query.value.trim()
+	return q.length >= 2 && !suggestions.value.some((s) => s.full_name.trim().toLowerCase() === q.toLowerCase())
+})
 
 onMounted(async () => {
 	statuses.value = await api("/statuses")
 	if (!statusId.value) statusId.value = statuses.value[0]?.id
+	// подтянуть детали уже привязанного профиля (табельный, организация, доступ)
+	if (selected.value?.id) {
+		try {
+			const list = await api("/residents?q=" + encodeURIComponent(selected.value.full_name || ""))
+			const full = list.find((r) => r.id === selected.value.id)
+			if (full) selected.value = full
+		} catch {}
+	}
 })
 
 let timer
-function onResidentInput() {
-	residentId.value = null
+function onSearch() {
 	clearTimeout(timer)
 	timer = setTimeout(async () => {
-		const q = residentName.value.trim()
+		const q = query.value.trim()
 		if (q.length < 2) return (suggestions.value = [])
-		suggestions.value = (await api("/residents?q=" + encodeURIComponent(q))).slice(0, 6)
-	}, 250)
+		suggestions.value = (await api("/residents?q=" + encodeURIComponent(q))).slice(0, 8)
+	}, 220)
 }
-function pick(r) {
-	residentId.value = r.id
-	residentName.value = r.full_name
+function select(r) {
+	selected.value = r
+	query.value = ""
 	suggestions.value = []
 }
-async function createResident() {
-	const r = await post("/residents", { full_name: residentName.value.trim() })
-	residentId.value = r.id
+function clearSelection() {
+	selected.value = null
+	query.value = ""
 	suggestions.value = []
-	toast.success("Проживающий создан")
+}
+async function createAndSelect() {
+	try {
+		const r = await post("/residents", { full_name: query.value.trim() })
+		select({ id: r.id, full_name: query.value.trim() })
+		toast.success("Профиль создан")
+	} catch (e) {
+		toast.error(e.message)
+	}
 }
 
 async function save() {
 	if (stage.value === "cancelled") {
 		if (!(await confirm({ title: "Отменить бронь?", danger: true, confirmLabel: "Отменить бронь" }))) return
-	} else {
-		if (!residentName.value.trim()) return toast.error("Введите ФИО проживающего")
-		if (props.existing && props.existing.resident_id) {
-			if (residentName.value.trim() !== (props.existing.resident_name || "")) {
-				try {
-					await put(`/residents/${props.existing.resident_id}`, { full_name: residentName.value.trim() })
-					toast.success("Данные проживающего обновлены")
-				} catch (e) {
-					return toast.error("Не удалось обновить ФИО: " + e.message)
-				}
-			}
-		} else if (!residentId.value && residentName.value.trim()) {
-			try {
-				const newResident = await post("/residents", { full_name: residentName.value.trim() })
-				residentId.value = newResident.id
-			} catch (e) {
-				return toast.error("Ошибка при создании проживающего: " + e.message)
-			}
-		}
+	} else if (!selected.value?.id) {
+		return toast.error("Выберите профиль вахтовика")
 	}
-
 	const payload = {
 		bed_id: props.bed.id,
-		resident_id: residentId.value || props.existing?.resident_id,
+		resident_id: selected.value?.id || props.existing?.resident_id || null,
 		status_id: Number(statusId.value),
 		stage: stage.value,
 		date_from: dateFrom.value,
@@ -113,16 +113,27 @@ async function remove() {
 	<Modal :title="existing ? 'Размещение' : 'Новое размещение'" @close="emit('close')">
 		<p class="muted" style="margin: 0">{{ bed.label }}</p>
 
-		<Field label="Проживающий">
-			<Input v-model="residentName" placeholder="Начните вводить ФИО" @input="onResidentInput" />
-			<div v-if="suggestions.length || (residentName.trim().length >= 2 && !exactExists && !existing)" class="suggest">
-				<button v-for="s in suggestions" :key="s.id" type="button" class="sug" @click="pick(s)">
-					{{ s.full_name }}<span v-if="s.tab_number" class="muted"> · {{ s.tab_number }}</span>
-				</button>
-				<button v-if="!exactExists && residentName.trim().length >= 2 && !existing" type="button" class="sug add" @click="createResident">
-					+ Создать «{{ residentName.trim() }}»
-				</button>
+		<Field label="Профиль вахтовика">
+			<div v-if="selected" class="picked">
+				<Avatar :name="selected.full_name" size="2.2rem" />
+				<div class="grow">
+					<div class="contrast" style="font-weight: 700">{{ selected.full_name }}</div>
+					<div class="muted" style="font-size: var(--font-size-xs)">{{ [selected.tab_number, selected.company].filter(Boolean).join(" · ") || "профиль" }}</div>
+				</div>
+				<Chip v-if="selected.account_username" color="var(--color-green)" dot>есть доступ</Chip>
+				<Button variant="ghost" size="sm" @click="clearSelection">Сменить</Button>
 			</div>
+			<template v-else>
+				<Input v-model="query" placeholder="Поиск по ФИО / табельному №…" @input="onSearch" />
+				<div v-if="suggestions.length || canCreate" class="suggest">
+					<button v-for="s in suggestions" :key="s.id" type="button" class="sug" @click="select(s)">
+						<span class="contrast">{{ s.full_name }}</span>
+						<span class="muted"><template v-if="s.tab_number"> · {{ s.tab_number }}</template><template v-if="s.company"> · {{ s.company }}</template></span>
+					</button>
+					<button v-if="canCreate" type="button" class="sug add" @click="createAndSelect">+ Создать профиль «{{ query.trim() }}»</button>
+				</div>
+				<p class="muted" style="font-size: var(--font-size-xs); margin: 4px 0 0">Бронь привязывается к профилю. Доступ в кабинет выдаётся отдельно в разделе «Профили».</p>
+			</template>
 		</Field>
 
 		<div class="two">
@@ -149,12 +160,21 @@ async function remove() {
 	grid-template-columns: 1fr 1fr;
 	gap: var(--gap-md);
 }
+.picked {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	padding: var(--gap-sm) var(--gap-md);
+	background: var(--color-bg);
+	border: 1px solid var(--color-divider);
+	border-radius: var(--radius-md);
+}
 .suggest {
 	margin-top: 4px;
 	border: 1px solid var(--color-divider);
 	border-radius: var(--radius-md);
 	background: var(--color-bg);
-	max-height: 200px;
+	max-height: 220px;
 	overflow: auto;
 }
 .sug {
@@ -164,7 +184,6 @@ async function remove() {
 	padding: var(--gap-sm) var(--gap-md);
 	background: transparent;
 	border: none;
-	color: var(--color-base);
 	font: inherit;
 	cursor: pointer;
 }
@@ -172,7 +191,7 @@ async function remove() {
 	background: var(--color-button-bg);
 }
 .sug.add {
-	color: var(--color-green);
+	color: var(--color-brand);
 	font-weight: 700;
 }
 </style>

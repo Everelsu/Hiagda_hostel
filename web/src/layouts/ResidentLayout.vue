@@ -55,21 +55,23 @@ async function changePassword() {
 <template>
 	<div class="res-shell">
 		<header class="res-top">
-			<div class="brand-mark"><span class="dot" /> NochOtel</div>
-			<nav class="res-nav">
-				<router-link
-					v-for="t in tabs"
-					:key="t.to"
-					:to="t.to"
-					:exact-active-class="t.exact ? 'active' : undefined"
-					:active-class="t.exact ? '' : 'active'"
-				>
-					{{ t.label }}
-				</router-link>
-			</nav>
-			<div class="row" style="gap: var(--gap-sm)">
-				<button class="btn btn-sm btn-ghost" @click="toggleTheme"><Icon :name="theme === 'dark' ? 'moon' : 'sun'" /></button>
-				<button class="btn btn-sm" @click="logout">Выход</button>
+			<div class="res-top__inner">
+				<div class="brand-mark"><span class="dot" /> Хиагда</div>
+				<nav class="res-nav">
+					<router-link
+						v-for="t in tabs"
+						:key="t.to"
+						:to="t.to"
+						:exact-active-class="t.exact ? 'active' : undefined"
+						:active-class="t.exact ? '' : 'active'"
+					>
+						{{ t.label }}
+					</router-link>
+				</nav>
+				<div class="row" style="gap: var(--gap-sm)">
+					<button class="btn btn-sm btn-ghost" @click="toggleTheme"><Icon :name="theme === 'dark' ? 'moon' : 'sun'" /></button>
+					<button class="btn btn-sm" @click="logout">Выход</button>
+				</div>
 			</div>
 		</header>
 
@@ -113,13 +115,17 @@ async function changePassword() {
 	position: sticky;
 	top: 0;
 	z-index: 10;
+	padding: var(--gap-md) var(--gap-lg);
+	background: var(--color-raised-bg);
+	border-bottom: 1px solid var(--color-divider);
+}
+.res-top__inner {
+	max-width: 820px;
+	margin: 0 auto;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: var(--gap-md);
-	padding: var(--gap-md) var(--gap-lg);
-	background: var(--color-raised-bg);
-	border-bottom: 1px solid var(--color-divider);
 }
 .res-nav {
 	display: flex;
@@ -138,7 +144,7 @@ async function changePassword() {
 	font-weight: var(--font-weight-bold);
 }
 .res-main {
-	max-width: 760px;
+	max-width: 820px;
 	margin: 0 auto;
 	padding: var(--gap-xl) var(--gap-lg) calc(var(--gap-xl) + 4rem);
 }

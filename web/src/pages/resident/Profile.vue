@@ -68,7 +68,7 @@ async function changePassword() {
 	<div class="grid" style="max-width: 560px">
 		<PageHeader title="Мой профиль" icon="user" />
 
-		<Card title="О себе">
+		<Card title="О себе" stack>
 			<div class="avatar-row">
 				<Avatar :src="photo" :name="resident?.full_name" size="4rem" />
 				<div class="row" style="gap: var(--gap-sm)">
@@ -89,7 +89,7 @@ async function changePassword() {
 			<Button variant="primary" :loading="savingProfile" @click="saveProfile">Сохранить</Button>
 		</Card>
 
-		<Card title="Смена пароля">
+		<Card title="Смена пароля" stack>
 			<Field label="Текущий пароль"><Input v-model="curPass" type="password" /></Field>
 			<Field label="Новый пароль"><Input v-model="newPass" type="password" /></Field>
 			<Button :loading="savingPass" @click="changePassword">Изменить пароль</Button>
@@ -102,7 +102,6 @@ async function changePassword() {
 	display: flex;
 	align-items: center;
 	gap: var(--gap-md);
-	margin-bottom: var(--gap-md);
 }
 .two {
 	display: grid;
@@ -114,7 +113,6 @@ async function changePassword() {
 	background: var(--color-bg);
 	border: 1px solid var(--color-divider);
 	border-radius: var(--radius-md);
-	margin: var(--gap-md) 0;
 }
 .k-card + .k-card {
 	margin-top: var(--gap-lg);

@@ -45,7 +45,7 @@ async function submit() {
 	<div class="login">
 		<aside class="login__brand">
 			<div class="login__brandinner">
-				<div class="brand-mark login__logo"><span class="dot" /> NochOtel</div>
+				<div class="brand-mark login__logo"><span class="dot" /> Хиагда</div>
 				<p class="login__tagline">Учёт номерного фонда вахтовых гостиниц</p>
 				<p class="login__sub">Размещение, свободные места, карта посёлков и кабинет вахтовика — в одной системе.</p>
 			</div>
@@ -56,15 +56,17 @@ async function submit() {
 				<h1 class="login__title">{{ needsSetup ? "Создание администратора" : "Вход в систему" }}</h1>
 				<p class="login__hint">{{ needsSetup ? "Задайте первый учётный аккаунт" : "Введите логин и пароль" }}</p>
 
-				<Field label="Логин">
-					<Input v-model="username" :invalid="!!err" />
-				</Field>
-				<Field label="Пароль">
-					<Input v-model="password" type="password" :invalid="!!err" />
-				</Field>
-				<Field v-if="needsSetup" label="ФИО администратора">
-					<Input v-model="fullName" />
-				</Field>
+				<div class="login__fields">
+					<Field label="Логин">
+						<Input v-model="username" :invalid="!!err" />
+					</Field>
+					<Field label="Пароль">
+						<Input v-model="password" type="password" :invalid="!!err" />
+					</Field>
+					<Field v-if="needsSetup" label="ФИО администратора">
+						<Input v-model="fullName" />
+					</Field>
+				</div>
 
 				<p v-if="err" class="login__err">{{ err }}</p>
 				<Button variant="primary" size="lg" block type="submit" :loading="busy">
@@ -123,6 +125,10 @@ async function submit() {
 .login__hint {
 	margin: 4px 0 var(--gap-xl);
 	color: var(--color-secondary);
+}
+.login__fields {
+	display: grid;
+	gap: var(--gap-md);
 }
 .login__err {
 	color: var(--color-red);
