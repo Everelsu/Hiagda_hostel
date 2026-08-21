@@ -1,10 +1,19 @@
 <script setup>
+import { ref } from "vue"
+
 const model = defineModel({ type: [String, Number], default: "" })
 defineProps({ invalid: Boolean, type: { type: String, default: "text" } })
+
+// Позволяет родителю ставить фокус (горячие клавиши, автофокус в формах)
+const el = ref(null)
+defineExpose({
+	focus: () => el.value?.focus(),
+	select: () => el.value?.select(),
+})
 </script>
 
 <template>
-	<input v-model="model" :type="type" class="k-input" :class="{ 'k-input--invalid': invalid }" />
+	<input ref="el" v-model="model" :type="type" class="k-input" :class="{ 'k-input--invalid': invalid }" />
 </template>
 
 <style scoped>

@@ -17,8 +17,8 @@ const busy = ref(false)
 
 const tabs = [
 	{ to: "/me", exact: true, icon: "home", label: "Главная", badge: true },
-	{ to: "/me/hotel", icon: "building", label: "Мой дом" },
-	{ to: "/me/roommates", icon: "users", label: "Соседи" },
+	{ to: "/me/room", icon: "bed", label: "Мой номер" },
+	{ to: "/me/hotel", icon: "building", label: "Дом" },
 	{ to: "/me/issues", icon: "wrench", label: "Заявки" },
 	{ to: "/me/profile", icon: "user", label: "Профиль" },
 ]
@@ -37,7 +37,7 @@ function logout() {
 	router.push({ name: "login" })
 }
 async function changePassword() {
-	if (newPass.value.length < 4) return toast("Пароль слишком короткий (мин. 4)")
+	if (newPass.value.length < 6) return toast("Пароль слишком короткий (мин. 6 символов)")
 	busy.value = true
 	try {
 		await post("/me/password", { current: curPass.value, next: newPass.value })

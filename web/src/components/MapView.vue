@@ -20,13 +20,31 @@ let layer = null
 let resizeObs = null
 const markerById = new Map()
 
-function makeIcon(color, selected = false) {
+const escapeHtml = (s) =>
+	String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
+
+// badge — короткая подпись прямо на метке (например, число свободных мест),
+// чтобы карта читалась без наведения. shape "home" выделяет «свой» дом.
+function makeIcon(marker, selected = false) {
+	const color = marker.color || "#c78aff"
+	const badge = marker.badge != null && marker.badge !== "" ? String(marker.badge) : null
+	const cls = [
+		"noch-pin",
+		selected ? "noch-pin--selected" : "",
+		badge ? "noch-pin--badge" : "",
+		marker.shape === "home" ? "noch-pin--home" : "",
+	]
+		.filter(Boolean)
+		.join(" ")
+	const size = badge ? (selected ? 42 : 36) : selected ? 30 : 24
 	return L.divIcon({
-		className: `noch-pin${selected ? " noch-pin--selected" : ""}`,
-		html: `<span style="--pin:${color || "#c78aff"}"></span>`,
-		iconSize: selected ? [30, 30] : [24, 24],
-		iconAnchor: selected ? [15, 30] : [12, 24],
-		popupAnchor: [0, -22],
+		className: cls,
+		html: badge
+			? `<span style="--pin:${color}"><i>${escapeHtml(badge)}</i></span>`
+			: `<span style="--pin:${color}"></span>`,
+		iconSize: [size, size],
+		iconAnchor: [size / 2, size],
+		popupAnchor: [0, -size + 4],
 	})
 }
 
@@ -45,7 +63,11 @@ function render() {
 		const lng = Number(marker.lng)
 		if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
 		const selected = String(marker.id) === String(props.selectedId)
-		const leafletMarker = L.marker([lat, lng], { icon: makeIcon(marker.color, selected), title: markerTitle(marker) }).addTo(layer)
+		const leafletMarker = L.marker([lat, lng], {
+			icon: makeIcon(marker, selected),
+			title: markerTitle(marker),
+			zIndexOffset: selected ? 1000 : marker.shape === "home" ? 500 : 0,
+		}).addTo(layer)
 		if (marker.html) leafletMarker.bindPopup(marker.html, { maxWidth: 280 })
 		else if (markerTitle(marker)) leafletMarker.bindTooltip(markerTitle(marker), { direction: "top" })
 		leafletMarker.on("click", () => {
@@ -142,6 +164,41 @@ onBeforeUnmount(() => {
 	height: 26px;
 	border-width: 3px;
 	box-shadow: 0 0 0 6px color-mix(in srgb, var(--pin), transparent 72%), 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
+/* Метка с числом: читается без наведения */
+.noch-pin--badge span {
+	width: 34px;
+	height: 34px;
+	border-radius: var(--radius-max);
+	transform: none;
+	display: grid;
+	place-items: center;
+	border: 2px solid #fff;
+}
+.noch-pin--badge i {
+	font-style: normal;
+	font-weight: 800;
+	font-size: 13px;
+	line-height: 1;
+	color: #10131a;
+	letter-spacing: -0.02em;
+}
+.noch-pin--badge.noch-pin--selected span {
+	width: 40px;
+	height: 40px;
+	box-shadow: 0 0 0 6px color-mix(in srgb, var(--pin), transparent 70%), 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+.noch-pin--badge.noch-pin--selected i {
+	font-size: 15px;
+}
+/* «Мой дом» — квадратная метка, чтобы не путать с точками интереса */
+.noch-pin--home span {
+	border-radius: var(--radius-md);
+	transform: none;
+	width: 26px;
+	height: 26px;
+	box-shadow: 0 0 0 5px color-mix(in srgb, var(--pin), transparent 74%), 0 3px 10px rgba(0, 0, 0, 0.45);
 }
 .leaflet-popup-content {
 	font-family: inherit;

@@ -1,140 +1,359 @@
 <script setup>
-import { ref, onMounted } from "vue"
-import { api, post, del } from "@/api/client"
+/**
+ * Справочники — три словаря, на которых держится вся система:
+ * типы номеров, цветовые статусы брони и каталог удобств.
+ * Всё редактируется на месте, у каждой записи видно, где она используется.
+ */
+import { ref, onMounted, computed } from "vue"
+import { api, post, put, del } from "@/api/client"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
 import { amenityIcon } from "@/icons"
 import Icon from "@/components/Icon.vue"
-import { PageHeader, Card, Input, Select, Button, IconButton, ListRow, StatusDot, confirm } from "@/ui"
+import { PageHeader, Card, Input, Select, Button, IconButton, Tabs, EmptyState, confirm } from "@/ui"
 
 const auth = useAuthStore()
 const canEdit = auth.can("editor")
 const canAdmin = auth.can("admin")
 
+const tab = ref("classes")
 const classes = ref([])
 const statuses = ref([])
 const amenities = ref([])
+const loading = ref(true)
 
 const newClass = ref("")
-const newStatus = ref({ name: "", color: "#1bd96a" })
+const newStatus = ref({ name: "", color: "#5fc8ff" })
 const newAmenity = ref({ name: "", icon: "dot", scope: "both" })
-const ICON_OPTIONS = ["dot", "wifi", "tv", "shower", "fridge", "snow", "utensils", "washer", "wind", "dumbbell", "sofa"]
+const editing = ref(null) // { kind, id, ...поля }
 
-onMounted(async () => {
+const ICON_OPTIONS = [
+	{ value: "dot", label: "Точка" },
+	{ value: "wifi", label: "Wi-Fi" },
+	{ value: "tv", label: "Телевизор" },
+	{ value: "shower", label: "Душ" },
+	{ value: "fridge", label: "Холодильник" },
+	{ value: "snow", label: "Кондиционер" },
+	{ value: "utensils", label: "Питание" },
+	{ value: "washer", label: "Стирка" },
+	{ value: "wind", label: "Сушилка" },
+	{ value: "dumbbell", label: "Спортзал" },
+	{ value: "sofa", label: "Мебель" },
+]
+const SCOPE = { both: "везде", room: "в номере", hotel: "в доме" }
+const PRESET_COLORS = ["#3a3f47", "#5fc8ff", "#1bd96a", "#ff8a5c", "#ff496e", "#c78aff", "#ffd166"]
+
+const tabs = computed(() => [
+	{ value: "classes", label: "Типы номеров", icon: "bed", count: classes.value.length },
+	{ value: "statuses", label: "Статусы брони", icon: "tag", count: statuses.value.length },
+	{ value: "amenities", label: "Удобства", icon: "armchair", count: amenities.value.length },
+])
+
+async function reload() {
 	;[classes.value, statuses.value, amenities.value] = await Promise.all([api("/classes"), api("/statuses"), api("/amenities")])
+}
+onMounted(async () => {
+	try {
+		await reload()
+	} finally {
+		loading.value = false
+	}
 })
 
-async function addClass() {
-	if (!newClass.value.trim()) return
+/* ---------- общие помощники ---------- */
+function startEdit(kind, item) {
+	if (!canEdit) return
+	editing.value = { kind, ...item }
+}
+async function saveEdit() {
+	const e = editing.value
 	try {
-		await post("/classes", { name: newClass.value.trim() })
-		newClass.value = ""
-		classes.value = await api("/classes")
+		if (e.kind === "class") await put("/classes/" + e.id, { name: e.name })
+		if (e.kind === "status") await put("/statuses/" + e.id, { name: e.name, color: e.color, sort: e.sort })
+		if (e.kind === "amenity") await put("/amenities/" + e.id, { name: e.name, icon: e.icon, scope: e.scope })
+		editing.value = null
+		await reload()
+		toast.success("Сохранено")
+	} catch (err) {
+		toast.error(err.message)
+	}
+}
+async function remove(kind, item, path, what) {
+	const used = item.used_count || 0
+	const message = used
+		? `Запись используется ${used} раз. Удаление может нарушить связанные данные.`
+		: "Запись нигде не используется — удалить безопасно."
+	if (!(await confirm({ title: `Удалить «${item.name}»?`, message, danger: true, confirmLabel: "Удалить" }))) return
+	try {
+		await del(path + item.id)
+		await reload()
+		toast.success(what + " удалён")
 	} catch (e) {
 		toast.error(e.message)
 	}
 }
-async function removeClass(c) {
-	if (!(await confirm({ title: `Удалить тип «${c.name}»?`, danger: true, confirmLabel: "Удалить" }))) return
+
+/* ---------- добавление ---------- */
+async function addClass() {
+	const name = newClass.value.trim()
+	if (!name) return
 	try {
-		await del("/classes/" + c.id)
-		classes.value = await api("/classes")
+		await post("/classes", { name })
+		newClass.value = ""
+		await reload()
 	} catch (e) {
 		toast.error(e.message)
 	}
 }
 async function addStatus() {
-	if (!newStatus.value.name) return
+	if (!newStatus.value.name.trim()) return
 	try {
 		await post("/statuses", { ...newStatus.value, sort: statuses.value.length })
-		newStatus.value = { name: "", color: "#1bd96a" }
-		statuses.value = await api("/statuses")
-	} catch (e) {
-		toast.error(e.message)
-	}
-}
-async function removeStatus(s) {
-	if (!(await confirm({ title: `Удалить статус «${s.name}»?`, danger: true, confirmLabel: "Удалить" }))) return
-	try {
-		await del("/statuses/" + s.id)
-		statuses.value = await api("/statuses")
+		newStatus.value = { name: "", color: "#5fc8ff" }
+		await reload()
 	} catch (e) {
 		toast.error(e.message)
 	}
 }
 async function addAmenity() {
-	if (!newAmenity.value.name) return
+	if (!newAmenity.value.name.trim()) return
 	try {
 		await post("/amenities", { ...newAmenity.value })
 		newAmenity.value = { name: "", icon: "dot", scope: "both" }
-		amenities.value = await api("/amenities")
+		await reload()
 	} catch (e) {
 		toast.error(e.message)
 	}
 }
-async function removeAmenity(a) {
-	if (!(await confirm({ title: `Удалить удобство «${a.name}»?`, danger: true, confirmLabel: "Удалить" }))) return
-	await del("/amenities/" + a.id)
-	amenities.value = await api("/amenities")
-}
-const SCOPE = { both: "везде", room: "номер", hotel: "дом" }
 </script>
-
-<style scoped>
-.cat-grid {
-	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-	gap: var(--gap-lg);
-	align-items: start;
-}
-</style>
 
 <template>
 	<div class="grid">
-		<PageHeader title="Справочники" subtitle="Типы номеров, статусы и каталог удобств" icon="tag" />
+		<PageHeader title="Справочники" subtitle="Словари, на которые опираются номера и брони" icon="tag" />
 
-		<div class="cat-grid">
-			<Card title="Типы номеров">
-				<div class="grid" style="gap: var(--gap-sm)">
-					<ListRow v-for="c in classes" :key="c.id">
-						<template #title>{{ c.name }}</template>
-						<template #trail><IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click="removeClass(c)" /></template>
-					</ListRow>
-				</div>
-				<div v-if="canEdit" class="row" style="margin-top: var(--gap-md)"><Input v-model="newClass" placeholder="Новый тип" @keyup.enter="addClass" /><Button icon="plus" @click="addClass" /></div>
+		<Tabs v-model="tab" :options="tabs" />
+
+		<!-- ТИПЫ НОМЕРОВ -->
+		<template v-if="tab === 'classes'">
+			<p class="lead">Тип номера — категория из ТЗ: по нему фильтруется шахматка и поиск свободных мест.</p>
+
+			<Card v-if="canEdit" pad="md" class="addbar">
+				<Input v-model="newClass" placeholder="Например: Двухместный" @keyup.enter="addClass" />
+				<Button variant="primary" icon="plus" @click="addClass">Добавить тип</Button>
 			</Card>
 
-			<Card title="Статусы номеров">
-				<div class="grid" style="gap: var(--gap-sm)">
-					<ListRow v-for="s in statuses" :key="s.id">
-						<template #lead><StatusDot :color="s.color" size="14px" /></template>
-						<template #title>{{ s.name }}</template>
-						<template #trail><IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click="removeStatus(s)" /></template>
-					</ListRow>
+			<Card v-if="!loading && !classes.length"><EmptyState icon="bed" title="Типов нет" text="Добавьте первый тип номера." /></Card>
+			<div v-else class="list">
+				<div v-for="c in classes" :key="c.id" class="item">
+					<template v-if="editing?.kind === 'class' && editing.id === c.id">
+						<Input v-model="editing.name" style="flex: 1" @keyup.enter="saveEdit" />
+						<Button size="sm" variant="primary" icon="check" @click="saveEdit" />
+						<Button size="sm" variant="ghost" icon="x" @click="editing = null" />
+					</template>
+					<template v-else>
+						<Icon name="bed" class="item-ico" />
+						<span class="item-name">{{ c.name }}</span>
+						<span class="usage" :class="{ zero: !c.used_count }">{{ c.used_count }} ном.</span>
+						<IconButton v-if="canEdit" icon="pencil" label="Переименовать" size="sm" @click="startEdit('class', c)" />
+						<IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click="remove('class', c, '/classes/', 'Тип')" />
+					</template>
 				</div>
-				<div v-if="canEdit" class="row" style="margin-top: var(--gap-md)">
-					<Input v-model="newStatus.name" placeholder="Название" />
-					<input v-model="newStatus.color" type="color" style="width: 48px; padding: 2px; height: var(--control-h-md)" />
-					<Button icon="plus" @click="addStatus" />
+			</div>
+		</template>
+
+		<!-- СТАТУСЫ -->
+		<template v-else-if="tab === 'statuses'">
+			<p class="lead">Цвет статуса — это цвет ленты в шахматке. Пункт ТЗ «цветовая индикация + возможность добавлять новые».</p>
+
+			<Card v-if="canEdit" pad="md" class="addbar">
+				<Input v-model="newStatus.name" placeholder="Название статуса" style="flex: 1" @keyup.enter="addStatus" />
+				<div class="swatches">
+					<button
+						v-for="c in PRESET_COLORS"
+						:key="c"
+						type="button"
+						class="sw"
+						:class="{ on: newStatus.color === c }"
+						:style="{ background: c }"
+						@click="newStatus.color = c"
+					/>
+					<input v-model="newStatus.color" type="color" class="colorpick" title="Свой цвет" />
 				</div>
+				<Button variant="primary" icon="plus" @click="addStatus">Добавить</Button>
 			</Card>
 
-			<Card title="Каталог удобств">
-				<div class="grid" style="gap: var(--gap-sm)">
-					<ListRow v-for="a in amenities" :key="a.id">
-						<template #lead><Icon :name="amenityIcon(a.icon)" /></template>
-						<template #title>{{ a.name }}</template>
-						<template #sub>{{ SCOPE[a.scope] || a.scope }}</template>
-						<template #trail><IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click="removeAmenity(a)" /></template>
-					</ListRow>
+			<div class="list">
+				<div v-for="s in statuses" :key="s.id" class="item">
+					<template v-if="editing?.kind === 'status' && editing.id === s.id">
+						<input v-model="editing.color" type="color" class="colorpick" />
+						<Input v-model="editing.name" style="flex: 1" @keyup.enter="saveEdit" />
+						<Button size="sm" variant="primary" icon="check" @click="saveEdit" />
+						<Button size="sm" variant="ghost" icon="x" @click="editing = null" />
+					</template>
+					<template v-else>
+						<span class="ribbon-demo" :style="{ background: s.color }" />
+						<span class="item-name">{{ s.name }}</span>
+						<span class="usage" :class="{ zero: !s.used_count }">{{ s.used_count }} брон.</span>
+						<IconButton v-if="canEdit" icon="pencil" label="Изменить" size="sm" @click="startEdit('status', s)" />
+						<IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click="remove('status', s, '/statuses/', 'Статус')" />
+					</template>
 				</div>
-				<div v-if="canEdit" class="row wrap" style="margin-top: var(--gap-md)">
-					<Input v-model="newAmenity.name" placeholder="Название" style="min-width: 120px" />
-					<Select v-model="newAmenity.icon" style="width: auto"><option v-for="i in ICON_OPTIONS" :key="i" :value="i">{{ i }}</option></Select>
-					<Select v-model="newAmenity.scope" style="width: auto"><option value="both">везде</option><option value="room">номер</option><option value="hotel">дом</option></Select>
-					<Button icon="plus" @click="addAmenity" />
-				</div>
+			</div>
+		</template>
+
+		<!-- УДОБСТВА -->
+		<template v-else>
+			<p class="lead">Удобства отмечаются в номере и в доме. Вахтовик видит их у себя и жмёт по сломанному, чтобы подать заявку.</p>
+
+			<Card v-if="canEdit" pad="md" class="addbar wrap">
+				<Input v-model="newAmenity.name" placeholder="Название удобства" style="flex: 1; min-width: 160px" @keyup.enter="addAmenity" />
+				<Select v-model="newAmenity.icon" style="width: auto">
+					<option v-for="i in ICON_OPTIONS" :key="i.value" :value="i.value">{{ i.label }}</option>
+				</Select>
+				<Select v-model="newAmenity.scope" style="width: auto">
+					<option value="both">везде</option>
+					<option value="room">в номере</option>
+					<option value="hotel">в доме</option>
+				</Select>
+				<Button variant="primary" icon="plus" @click="addAmenity">Добавить</Button>
 			</Card>
-		</div>
+
+			<div class="grid-amen">
+				<div v-for="a in amenities" :key="a.id" class="item">
+					<template v-if="editing?.kind === 'amenity' && editing.id === a.id">
+						<Input v-model="editing.name" style="flex: 1; min-width: 100px" @keyup.enter="saveEdit" />
+						<Select v-model="editing.icon" style="width: auto">
+							<option v-for="i in ICON_OPTIONS" :key="i.value" :value="i.value">{{ i.label }}</option>
+						</Select>
+						<Select v-model="editing.scope" style="width: auto">
+							<option value="both">везде</option>
+							<option value="room">в номере</option>
+							<option value="hotel">в доме</option>
+						</Select>
+						<Button size="sm" variant="primary" icon="check" @click="saveEdit" />
+						<Button size="sm" variant="ghost" icon="x" @click="editing = null" />
+					</template>
+					<template v-else>
+						<span class="amen-ico"><Icon :name="amenityIcon(a.icon)" size="1.15rem" /></span>
+						<span class="grow">
+							<span class="item-name">{{ a.name }}</span>
+							<span class="muted amen-scope">{{ SCOPE[a.scope] || a.scope }} · привязано {{ a.used_count }}</span>
+						</span>
+						<IconButton v-if="canEdit" icon="pencil" label="Изменить" size="sm" @click="startEdit('amenity', a)" />
+						<IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click="remove('amenity', a, '/amenities/', 'Удобство')" />
+					</template>
+				</div>
+			</div>
+		</template>
 	</div>
 </template>
+
+<style scoped>
+.lead {
+	margin: 0;
+	color: var(--color-secondary);
+	font-size: var(--font-size-sm);
+	max-width: 70ch;
+}
+.addbar {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+}
+.addbar.wrap {
+	flex-wrap: wrap;
+}
+.list {
+	display: grid;
+	gap: var(--gap-xs);
+	max-width: 720px;
+}
+.grid-amen {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+	gap: var(--gap-xs);
+}
+.item {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	padding: var(--gap-sm) var(--gap-md);
+	background: var(--color-raised-bg);
+	border: 1px solid var(--color-divider);
+	border-radius: var(--radius-md);
+	min-height: 48px;
+}
+.item:hover {
+	border-color: color-mix(in srgb, var(--color-brand), transparent 55%);
+}
+.item-ico {
+	color: var(--color-brand);
+	flex-shrink: 0;
+}
+.item-name {
+	display: block;
+	font-weight: 700;
+	color: var(--color-contrast);
+	font-size: var(--font-size-sm);
+}
+.list .item-name {
+	flex: 1;
+}
+.usage {
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+	padding: 2px 8px;
+	background: var(--color-bg);
+	border-radius: var(--radius-max);
+	white-space: nowrap;
+}
+.usage.zero {
+	opacity: 0.55;
+}
+.ribbon-demo {
+	width: 34px;
+	height: 14px;
+	border-radius: 999px;
+	flex-shrink: 0;
+}
+.swatches {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+.sw {
+	width: 22px;
+	height: 22px;
+	border-radius: var(--radius-max);
+	border: 2px solid transparent;
+	cursor: pointer;
+	padding: 0;
+}
+.sw.on {
+	border-color: var(--color-contrast);
+	transform: scale(1.12);
+}
+.colorpick {
+	width: 34px;
+	height: 28px;
+	padding: 2px;
+	background: var(--color-bg);
+	border: 1px solid var(--color-divider);
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+	flex-shrink: 0;
+}
+.amen-ico {
+	display: grid;
+	place-items: center;
+	width: 2rem;
+	height: 2rem;
+	border-radius: var(--radius-md);
+	background: var(--color-brand-highlight);
+	color: var(--color-brand);
+	flex-shrink: 0;
+}
+.amen-scope {
+	font-size: var(--font-size-xs);
+}
+</style>

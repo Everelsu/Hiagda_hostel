@@ -103,6 +103,107 @@ test("роль «Просмотр» читает данные, но не мож�
 	assert.equal(write.status, 403, "наблюдатель не должен создавать записи")
 })
 
+test("отзыв о номере и о доме считаются раздельно", async () => {
+	// вахтовик с активным размещением
+	const acc = await call("POST", `/residents/${residentId}/account`, { token: adminToken })
+	assert.equal(acc.status, 200)
+	const login = await call("POST", "/login", { body: { username: acc.json.username, password: acc.json.password } })
+	const meToken = login.json.token
+
+	assert.equal((await call("POST", "/me/review", { token: meToken, body: { target: "room", rating: 2 } })).status, 200)
+	assert.equal((await call("POST", "/me/review", { token: meToken, body: { target: "hotel", rating: 5 } })).status, 200)
+
+	const ov = await call("GET", "/me/overview", { token: meToken })
+	assert.equal(ov.json.my_room_review.rating, 2, "отзыв о номере сохраняется отдельно")
+	assert.equal(ov.json.my_review.rating, 5, "отзыв о доме сохраняется отдельно")
+	assert.equal(ov.json.room.rating, 2, "рейтинг номера — только из отзывов о номере")
+	assert.equal(ov.json.hotel.rating, 5, "рейтинг дома не смешивается с отзывами о номерах")
+	assert.ok(ov.json.stay.total_days > 0, "сводка по вахте посчитана")
+})
+
+test("вахтовик не может подать заявку по чужому номеру", async () => {
+	const login = await call("POST", "/login", { body: { username: "watch1", password: "watch123" } })
+	// observer — не вахтовик и не персонал по заявкам: у него нет своего номера
+	const foreign = await call("POST", "/me/issues", { token: login.json.token, body: { room_id: 1, comment: "чужая" } })
+	assert.equal(foreign.status, 403)
+})
+
+test("план этажа сохраняется и отдаётся вахтовику без чужих данных", async () => {
+	const rooms = await call("GET", "/rooms", { token: adminToken })
+	const room = rooms.json[0]
+
+	const saved = await call("PUT", "/plan/layout", {
+		token: adminToken,
+		body: {
+			hotel_id: room.hotel_id,
+			floor: room.floor ?? 1,
+			rooms: [{ id: room.id, plan_x: 2, plan_y: 3, plan_w: 4, plan_h: 2 }],
+			shapes: [{ kind: "corridor", label: "Коридор", x: 0, y: 6, w: 10, h: 2 }],
+		},
+	})
+	assert.equal(saved.status, 200)
+
+	const plan = await call("GET", `/plan?hotel_id=${room.hotel_id}`, { token: adminToken })
+	const placed = plan.json.rooms.find((r) => r.id === room.id)
+	assert.equal(placed.plan_x, 2)
+	assert.equal(placed.plan_w, 4)
+	assert.equal(plan.json.shapes.length, 1)
+	assert.equal(plan.json.shapes[0].kind, "corridor")
+
+	// у наблюдателя нет прав на правку плана
+	const obs = await call("POST", "/login", { body: { username: "watch1", password: "watch123" } })
+	const denied = await call("PUT", "/plan/layout", {
+		token: obs.json.token,
+		body: { hotel_id: room.hotel_id, floor: 1, rooms: [], shapes: [] },
+	})
+	assert.equal(denied.status, 403)
+})
+
+test("бронь переносится на другое место, занятое — отклоняется", async () => {
+	const rooms = await call("GET", "/rooms", { token: adminToken })
+	const beds = rooms.json.flatMap((r) => r.beds)
+	const target = beds.find((b) => b.id !== bedId)
+
+	const list = await call("GET", `/placements?bed_id=${bedId}`, { token: adminToken })
+	const p = list.json[0]
+
+	const moved = await call("PUT", `/placements/${p.id}`, {
+		token: adminToken,
+		body: { bed_id: target.id, resident_id: p.resident_id, status_id: p.status_id, stage: p.stage, date_from: p.date_from, date_to: p.date_to },
+	})
+	assert.equal(moved.status, 200, "перенос на свободное место разрешён")
+
+	const after = await call("GET", `/placements?bed_id=${target.id}`, { token: adminToken })
+	assert.ok(after.json.some((x) => x.id === p.id), "бронь оказалась на новом месте")
+
+	// вторая бронь на то же место в те же даты — конфликт
+	const clash = await call("POST", "/placements", {
+		token: adminToken,
+		body: { bed_id: target.id, resident_id: residentId, status_id: statusId, date_from: p.date_from, date_to: p.date_to },
+	})
+	assert.equal(clash.status, 409)
+})
+
+test("справочники отдают счётчик использования", async () => {
+	const created = await call("POST", "/classes", { token: adminToken, body: { name: "Люкс" } })
+	assert.equal(created.status, 200)
+
+	const classes = await call("GET", "/classes", { token: adminToken })
+	const lux = classes.json.find((c) => c.id === created.json.id)
+	assert.equal(lux.used_count, 0, "новый тип ещё нигде не используется")
+
+	// статус, на котором висят брони из предыдущих тестов
+	const statuses = await call("GET", "/statuses", { token: adminToken })
+	const used = statuses.json.find((s) => s.id === statusId)
+	assert.ok(used.used_count > 0, "статус показывает число броней")
+
+	// переименование справочника
+	const renamed = await call("PUT", `/classes/${created.json.id}`, { token: adminToken, body: { name: "Люкс+" } })
+	assert.equal(renamed.status, 200)
+	const after = await call("GET", "/classes", { token: adminToken })
+	assert.equal(after.json.find((c) => c.id === created.json.id).name, "Люкс+")
+})
+
 test("слишком короткий пароль отклоняется", async () => {
 	const weak = await call("POST", "/users", {
 		token: adminToken,

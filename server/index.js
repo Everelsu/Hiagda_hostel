@@ -182,6 +182,35 @@ function activePlacement(residentId) {
 		.get(residentId, today, today, today)
 }
 
+// Сводка по вахте: сколько всего дней, какой день идёт, сколько осталось.
+// Считаем на сервере, чтобы клиент не занимался арифметикой дат в часовых поясах.
+function staySummary(pl) {
+	if (!pl) return null
+	const day = 86400000
+	const startOfDay = (s) => {
+		const [y, m, d] = String(s).split("-").map(Number)
+		return Date.UTC(y, (m || 1) - 1, d || 1)
+	}
+	const now = new Date()
+	const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
+	const from = startOfDay(pl.date_from)
+	const to = startOfDay(pl.date_to)
+	const total = Math.max(1, Math.round((to - from) / day))
+	const passed = Math.round((today - from) / day)
+	const left = Math.round((to - today) / day)
+	return {
+		total_days: total,
+		days_left: left,
+		days_passed: Math.min(Math.max(passed, 0), total),
+		day_number: Math.min(Math.max(passed + 1, 1), total),
+		percent: Math.min(100, Math.max(0, Math.round((Math.min(Math.max(passed, 0), total) / total) * 100))),
+		started: today >= from,
+		finished: today > to,
+		date_from: pl.date_from,
+		date_to: pl.date_to,
+	}
+}
+
 api.get("/me/overview", (req, res) => {
 	const rid = req.user.resident_id
 	if (!rid) return res.json({ resident: null, placement: null, room: null, roommates: [], hotel: null })
@@ -194,6 +223,9 @@ api.get("/me/overview", (req, res) => {
 		const roomAmenities = db
 			.prepare("SELECT a.name, a.icon FROM room_amenities ra JOIN amenities a ON a.id = ra.amenity_id WHERE ra.room_id = ? ORDER BY a.name")
 			.all(pl.room_id)
+		const roomRev = db
+			.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE room_id = ?")
+			.get(pl.room_id)
 		room = {
 			id: pl.room_id,
 			number: pl.room_number,
@@ -203,6 +235,12 @@ api.get("/me/overview", (req, res) => {
 			description: pl.room_description,
 			amenities: roomAmenities,
 			images: imagesFor("room", pl.room_id),
+			rating: roomRev.avg ? Math.round(roomRev.avg * 10) / 10 : null,
+			reviews_count: roomRev.c,
+			// Открытые заявки по номеру — вахтовик видит, что поломка уже в работе
+			open_issues: db
+				.prepare("SELECT COUNT(*) c FROM room_issues WHERE room_id = ? AND status <> 'Починено'")
+				.get(pl.room_id).c,
 		}
 		roommates = db
 			.prepare(
@@ -223,7 +261,7 @@ api.get("/me/overview", (req, res) => {
 			.all(pl.hotel_id)
 		const places = db.prepare("SELECT id, name, kind, note, distance, latitude, longitude, icon FROM places WHERE hotel_id = ? ORDER BY name").all(pl.hotel_id)
 		const info = db.prepare("SELECT id, kind, title, body, sort FROM hotel_info_sections WHERE hotel_id = ? ORDER BY sort, id").all(pl.hotel_id)
-		const rev = db.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE hotel_id = ?").get(pl.hotel_id)
+		const rev = db.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE hotel_id = ? AND room_id IS NULL").get(pl.hotel_id)
 		hotel = {
 			...h,
 			amenities: hotelAmenities,
@@ -234,8 +272,22 @@ api.get("/me/overview", (req, res) => {
 			reviews_count: rev.c,
 		}
 	}
-	const myReview = pl ? db.prepare("SELECT id, rating, text, reply, reply_at FROM reviews WHERE hotel_id = ? AND resident_id = ?").get(pl.hotel_id, rid) : null
-	res.json({ resident, placement: pl || null, room, roommates, hotel, my_review: myReview || null })
+	const myReview = pl
+		? db.prepare("SELECT id, rating, text, reply, reply_at FROM reviews WHERE hotel_id = ? AND resident_id = ? AND room_id IS NULL").get(pl.hotel_id, rid)
+		: null
+	const myRoomReview = pl
+		? db.prepare("SELECT id, rating, text, reply, reply_at FROM reviews WHERE room_id = ? AND resident_id = ?").get(pl.room_id, rid)
+		: null
+	res.json({
+		resident,
+		placement: pl || null,
+		stay: staySummary(pl),
+		room,
+		roommates,
+		hotel,
+		my_review: myReview || null,
+		my_room_review: myRoomReview || null,
+	})
 })
 
 api.post("/me/review", (req, res) => {
@@ -246,9 +298,13 @@ api.post("/me/review", (req, res) => {
 	const pl = activePlacement(rid)
 	if (!pl) return res.status(400).json({ error: "Нет активного размещения" })
 	const text = req.body?.text || null
+	// target: "hotel" — отзыв о доме, "room" — о своём номере
+	const forRoom = req.body?.target === "room"
+	const roomId = forRoom ? pl.room_id : null
 	const tx = db.transaction(() => {
-		db.prepare("DELETE FROM reviews WHERE hotel_id = ? AND resident_id = ?").run(pl.hotel_id, rid)
-		db.prepare("INSERT INTO reviews (hotel_id, resident_id, rating, text) VALUES (?,?,?,?)").run(pl.hotel_id, rid, rating, text)
+		if (forRoom) db.prepare("DELETE FROM reviews WHERE room_id = ? AND resident_id = ?").run(roomId, rid)
+		else db.prepare("DELETE FROM reviews WHERE hotel_id = ? AND resident_id = ? AND room_id IS NULL").run(pl.hotel_id, rid)
+		db.prepare("INSERT INTO reviews (hotel_id, room_id, resident_id, rating, text) VALUES (?,?,?,?,?)").run(pl.hotel_id, roomId, rid, rating, text)
 	})
 	tx()
 	res.json({ ok: true })
@@ -281,6 +337,13 @@ api.post("/me/issues", (req, res) => {
 	const { room_id, amenity_name, comment, photo } = req.body || {}
 	if (!room_id) return res.status(400).json({ error: "Не указан ID комнаты" })
 	if (!comment || !comment.trim()) return res.status(400).json({ error: "Пожалуйста, опишите проблему" })
+	// Вахтовик подаёт заявку только по своему номеру; персонал — по любому.
+	if (!isStaffUser(req.user)) {
+		const mine = req.user.resident_id ? activePlacement(req.user.resident_id) : null
+		if (!mine || Number(mine.room_id) !== Number(room_id)) {
+			return res.status(403).json({ error: "Заявку можно подать только по своему номеру" })
+		}
+	}
 
 	try {
 		const info = db.prepare(`
@@ -348,9 +411,15 @@ api.get("/me/feed", (req, res) => {
 	const announcements = announcementsFor(pl?.hotel_id)
 	const seen = db.prepare("SELECT announcements_seen_at FROM users WHERE id = ?").get(req.user.id)?.announcements_seen_at
 	const unread = announcements.filter((a) => !seen || a.created_at > seen).length
+	// Дежурная информация для главной: к кому звонить и во сколько выезжать
+	const hotel = pl
+		? db.prepare("SELECT id, name, settlement, address, phone, check_in, check_out FROM hotels WHERE id = ?").get(pl.hotel_id)
+		: null
 	res.json({
 		resident,
 		placement: pl || null,
+		stay: staySummary(pl),
+		hotel,
 		announcements,
 		unread,
 		issues: myIssues(req.user.id),
@@ -358,6 +427,34 @@ api.get("/me/feed", (req, res) => {
 })
 
 api.get("/me/issues", (req, res) => res.json(myIssues(req.user.id)))
+
+// План своего этажа для вахтовика: где мой номер и что рядом (душ, кухня, выход).
+// Отдаём только номера и элементы своего этажа, без данных о жильцах.
+api.get("/me/plan", (req, res) => {
+	const rid = req.user.resident_id
+	const pl = rid ? activePlacement(rid) : null
+	if (!pl) return res.json({ available: false })
+	const floor = pl.floor ?? 1
+	const rooms = db
+		.prepare(
+			`SELECT id, number, floor, capacity, plan_x, plan_y, plan_w, plan_h
+			 FROM rooms WHERE hotel_id = ? AND IFNULL(floor, 1) = ? AND plan_x IS NOT NULL
+			 ORDER BY number`,
+		)
+		.all(pl.hotel_id, floor)
+	const shapes = db
+		.prepare("SELECT id, kind, label, x, y, w, h FROM plan_shapes WHERE hotel_id = ? AND floor = ? ORDER BY id")
+		.all(pl.hotel_id, floor)
+	res.json({
+		available: rooms.length > 0 || shapes.length > 0,
+		floor,
+		hotel_name: pl.hotel_name,
+		my_room_id: pl.room_id,
+		my_room_number: pl.room_number,
+		rooms,
+		shapes,
+	})
+})
 
 api.get("/issues/:id/comments", (req, res) => {
 	const issue = db.prepare("SELECT user_id FROM room_issues WHERE id = ?").get(req.params.id)
@@ -388,7 +485,7 @@ api.use(requireStaff)
 
 api.get("/map", (req, res) => {
 	const today = new Date().toISOString().slice(0, 10)
-	const hotels = db.prepare("SELECT id, name, settlement, address, latitude, longitude FROM hotels ORDER BY name").all()
+	const hotels = db.prepare("SELECT id, name, settlement, address, phone, latitude, longitude FROM hotels ORDER BY name").all()
 	const out = hotels.map((h) => {
 		const beds = db.prepare("SELECT COUNT(*) c FROM beds b JOIN rooms rm ON rm.id = b.room_id WHERE rm.hotel_id = ?").get(h.id).c
 		const occupied = db
@@ -410,19 +507,36 @@ api.get("/map", (req, res) => {
 				 WHERE rm.hotel_id = ? AND rb.date_from <= ? AND rb.date_to >= ?`,
 			)
 			.get(h.id, today, today).c
-		const rev = db.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE hotel_id = ?").get(h.id)
+		const rev = db.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE hotel_id = ? AND room_id IS NULL").get(h.id)
+		const rooms = db.prepare("SELECT COUNT(*) c FROM rooms WHERE hotel_id = ?").get(h.id).c
+		const departures = db
+			.prepare(
+				`SELECT COUNT(*) c FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
+				 WHERE rm.hotel_id = ? AND p.date_to = ? AND p.stage <> 'cancelled'`,
+			)
+			.get(h.id, today).c
+		const issues = db
+			.prepare(
+				`SELECT COUNT(*) c FROM room_issues ri JOIN rooms rm ON rm.id = ri.room_id
+				 WHERE rm.hotel_id = ? AND ri.status <> 'Починено'`,
+			)
+			.get(h.id).c
 		return {
 			id: h.id,
 			name: h.name,
 			settlement: h.settlement,
 			address: h.address,
+			phone: h.phone,
 			latitude: h.latitude ? Number(h.latitude) : null,
 			longitude: h.longitude ? Number(h.longitude) : null,
+			rooms,
 			beds,
 			occupied,
 			free: Math.max(0, beds - occupied),
 			arrivals,
+			departures,
 			repair,
+			issues,
 			occupancy: beds ? Math.round((occupied / beds) * 100) : 0,
 			rating: rev.avg ? Math.round(rev.avg * 10) / 10 : null,
 		}
@@ -551,15 +665,19 @@ api.get("/journal", (req, res) => {
 		args.push(req.query.to, req.query.from)
 	}
 	if (req.query.q) {
-		filters.push("(r.full_name LIKE ? OR rm.number LIKE ?)")
-		args.push(`%${req.query.q}%`, `%${req.query.q}%`)
+		filters.push("(r.full_name LIKE ? OR rm.number LIKE ? OR r.company LIKE ?)")
+		args.push(`%${req.query.q}%`, `%${req.query.q}%`, `%${req.query.q}%`)
+	}
+	if (req.query.stage) {
+		filters.push("p.stage = ?")
+		args.push(req.query.stage)
 	}
 	const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
 	res.json(
 		db
 			.prepare(
 				`SELECT p.id, p.date_from, p.date_to, p.comment, p.stage,
-					r.full_name AS resident_name,
+					p.resident_id, r.full_name AS resident_name, r.company, r.tab_number,
 					s.name AS status_name, s.color AS status_color,
 					b.label AS bed_label, rm.number AS room_number, h.name AS hotel_name
 				 FROM placements p
@@ -805,10 +923,59 @@ api.get("/plan", (req, res) => {
 			room.block = blockStmt.get(room.id, date, date) || null
 		}
 
-		res.json({ date, rooms })
+		const shapes = db
+			.prepare("SELECT id, floor, kind, label, x, y, w, h FROM plan_shapes WHERE hotel_id = ? ORDER BY id")
+			.all(req.query.hotel_id)
+
+		res.json({ date, rooms, shapes })
 	} catch (e) {
 		res.status(500).json({ error: e.message })
 	}
+})
+
+// Сохранение геометрии плана этажа: позиции номеров + элементы (коридоры, лестницы…).
+// Приходит целиком по одному этажу — так проще держать план консистентным.
+const SHAPE_KINDS = ["corridor", "stairs", "exit", "wc", "shower", "kitchen", "laundry", "lounge", "office", "other"]
+api.put("/plan/layout", requireRole("editor"), (req, res) => {
+	const hotelId = Number(req.body?.hotel_id)
+	const floor = Number(req.body?.floor)
+	if (!hotelId || !Number.isFinite(floor)) return res.status(400).json({ error: "Укажите гостиницу и этаж" })
+
+	const rooms = Array.isArray(req.body?.rooms) ? req.body.rooms : []
+	const shapes = Array.isArray(req.body?.shapes) ? req.body.shapes : []
+	const clamp = (v, min, max) => Math.min(max, Math.max(min, Math.round(Number(v) || 0)))
+
+	const ownRoom = db.prepare("SELECT id FROM rooms WHERE id = ? AND hotel_id = ? AND IFNULL(floor, 1) = ?")
+	const setGeom = db.prepare("UPDATE rooms SET plan_x = ?, plan_y = ?, plan_w = ?, plan_h = ? WHERE id = ?")
+
+	const tx = db.transaction(() => {
+		for (const r of rooms) {
+			if (!ownRoom.get(Number(r.id), hotelId, floor)) continue
+			if (r.plan_x == null) {
+				setGeom.run(null, null, null, null, Number(r.id))
+				continue
+			}
+			setGeom.run(clamp(r.plan_x, 0, 200), clamp(r.plan_y, 0, 200), clamp(r.plan_w, 1, 40), clamp(r.plan_h, 1, 40), Number(r.id))
+		}
+		db.prepare("DELETE FROM plan_shapes WHERE hotel_id = ? AND floor = ?").run(hotelId, floor)
+		const insShape = db.prepare(
+			"INSERT INTO plan_shapes (hotel_id, floor, kind, label, x, y, w, h) VALUES (?,?,?,?,?,?,?,?)",
+		)
+		for (const s of shapes) {
+			insShape.run(
+				hotelId,
+				floor,
+				SHAPE_KINDS.includes(s.kind) ? s.kind : "other",
+				s.label ? String(s.label).slice(0, 60) : null,
+				clamp(s.x, 0, 200),
+				clamp(s.y, 0, 200),
+				clamp(s.w, 1, 40),
+				clamp(s.h, 1, 40),
+			)
+		}
+	})
+	tx()
+	res.json({ ok: true })
 })
 
 const ROLES = ["admin", "editor", "observer", "viewer"]
@@ -941,7 +1108,7 @@ api.get("/hotels/:id", (req, res) => {
 	hotel.places = db.prepare("SELECT * FROM places WHERE hotel_id = ? ORDER BY name").all(hotel.id)
 	hotel.info = db.prepare("SELECT * FROM hotel_info_sections WHERE hotel_id = ? ORDER BY sort, id").all(hotel.id)
 	hotel.images = imagesFor("hotel", hotel.id)
-	const rev = db.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE hotel_id = ?").get(hotel.id)
+	const rev = db.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE hotel_id = ? AND room_id IS NULL").get(hotel.id)
 	hotel.reviews_count = rev.c
 	hotel.rating = rev.avg ? Math.round(rev.avg * 10) / 10 : null
 	res.json(hotel)
@@ -994,7 +1161,19 @@ api.delete("/places/:id", requireRole("editor"), (req, res) => {
 	res.json({ ok: true })
 })
 
-api.get("/amenities", (_req, res) => res.json(db.prepare("SELECT * FROM amenities ORDER BY name").all()))
+// used_count — сколько раз удобство привязано (чтобы не удалять вслепую)
+api.get("/amenities", (_req, res) =>
+	res.json(
+		db
+			.prepare(
+				`SELECT a.*,
+					(SELECT COUNT(*) FROM room_amenities ra WHERE ra.amenity_id = a.id)
+					+ (SELECT COUNT(*) FROM hotel_amenities ha WHERE ha.amenity_id = a.id) AS used_count
+				 FROM amenities a ORDER BY a.name`,
+			)
+			.all(),
+	),
+)
 api.post("/amenities", requireRole("editor"), (req, res) => {
 	const { name, icon, scope } = req.body || {}
 	if (!name) return res.status(400).json({ error: "Укажите название удобства" })
@@ -1003,6 +1182,21 @@ api.post("/amenities", requireRole("editor"), (req, res) => {
 			.prepare("INSERT INTO amenities (name, icon, scope) VALUES (?,?,?)")
 			.run(name, icon || "dot", ["room", "hotel", "both"].includes(scope) ? scope : "both")
 		res.json({ id: info.lastInsertRowid })
+	} catch {
+		res.status(400).json({ error: "Такое удобство уже есть" })
+	}
+})
+api.put("/amenities/:id", requireRole("editor"), (req, res) => {
+	const { name, icon, scope } = req.body || {}
+	if (!name) return res.status(400).json({ error: "Укажите название" })
+	try {
+		db.prepare("UPDATE amenities SET name = ?, icon = ?, scope = ? WHERE id = ?").run(
+			name,
+			icon || "dot",
+			["room", "hotel", "both"].includes(scope) ? scope : "both",
+			req.params.id,
+		)
+		res.json({ ok: true })
 	} catch {
 		res.status(400).json({ error: "Такое удобство уже есть" })
 	}
@@ -1046,11 +1240,14 @@ api.delete("/images/:id", requireRole("editor"), (req, res) => {
 })
 
 api.get("/hotels/:id/reviews", (req, res) => {
-	const rev = db.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE hotel_id = ?").get(req.params.id)
+	const rev = db.prepare("SELECT COUNT(*) c, AVG(rating) avg FROM reviews WHERE hotel_id = ? AND room_id IS NULL").get(req.params.id)
 	const list = db
 		.prepare(
-			`SELECT rv.id, rv.rating, rv.text, rv.created_at, rv.reply, rv.reply_at, r.full_name AS resident_name
-			 FROM reviews rv LEFT JOIN residents r ON r.id = rv.resident_id
+			`SELECT rv.id, rv.rating, rv.text, rv.created_at, rv.reply, rv.reply_at, rv.room_id,
+				rm.number AS room_number, r.full_name AS resident_name
+			 FROM reviews rv
+			 LEFT JOIN residents r ON r.id = rv.resident_id
+			 LEFT JOIN rooms rm ON rm.id = rv.room_id
 			 WHERE rv.hotel_id = ? ORDER BY rv.created_at DESC LIMIT 50`,
 		)
 		.all(req.params.id)
@@ -1061,7 +1258,16 @@ api.delete("/reviews/:id", requireRole("editor"), (req, res) => {
 	res.json({ ok: true })
 })
 
-api.get("/classes", (_req, res) => res.json(db.prepare("SELECT * FROM room_classes ORDER BY name").all()))
+api.get("/classes", (_req, res) =>
+	res.json(
+		db
+			.prepare(
+				`SELECT c.*, (SELECT COUNT(*) FROM rooms r WHERE r.class_id = c.id) AS used_count
+				 FROM room_classes c ORDER BY c.name`,
+			)
+			.all(),
+	),
+)
 api.post("/classes", requireRole("editor"), (req, res) => {
 	try {
 		const info = db.prepare("INSERT INTO room_classes (name) VALUES (?)").run(req.body.name)
@@ -1070,12 +1276,31 @@ api.post("/classes", requireRole("editor"), (req, res) => {
 		res.status(400).json({ error: "Такой класс уже есть" })
 	}
 })
+api.put("/classes/:id", requireRole("editor"), (req, res) => {
+	const name = (req.body?.name || "").trim()
+	if (!name) return res.status(400).json({ error: "Укажите название" })
+	try {
+		db.prepare("UPDATE room_classes SET name = ? WHERE id = ?").run(name, req.params.id)
+		res.json({ ok: true })
+	} catch {
+		res.status(400).json({ error: "Такой тип уже есть" })
+	}
+})
 api.delete("/classes/:id", requireRole("admin"), (req, res) => {
 	db.prepare("DELETE FROM room_classes WHERE id = ?").run(req.params.id)
 	res.json({ ok: true })
 })
 
-api.get("/statuses", (_req, res) => res.json(db.prepare("SELECT * FROM statuses ORDER BY sort, id").all()))
+api.get("/statuses", (_req, res) =>
+	res.json(
+		db
+			.prepare(
+				`SELECT s.*, (SELECT COUNT(*) FROM placements p WHERE p.status_id = s.id) AS used_count
+				 FROM statuses s ORDER BY s.sort, s.id`,
+			)
+			.all(),
+	),
+)
 api.post("/statuses", requireRole("editor"), (req, res) => {
 	const { name, color, sort } = req.body || {}
 	if (!name || !color) return res.status(400).json({ error: "Укажите название и цвет" })
@@ -1431,6 +1656,11 @@ api.put("/placements/:id", requireRole("editor"), (req, res) => {
 	if (date_to < date_from) return res.status(400).json({ error: "Дата выезда раньше даты заезда" })
 	const current = db.prepare("SELECT bed_id, stage FROM placements WHERE id = ?").get(req.params.id)
 	if (!current) return res.status(404).json({ error: "Размещение не найдено" })
+	// Перенос брони на другое место (перетаскивание в шахматке)
+	const bedId = req.body?.bed_id ? Number(req.body.bed_id) : current.bed_id
+	if (bedId !== current.bed_id && !db.prepare("SELECT id FROM beds WHERE id = ?").get(bedId)) {
+		return res.status(400).json({ error: "Место не найдено" })
+	}
 	const stage = req.body?.stage || current.stage
 	if (stage !== "cancelled" && !resident_id) return res.status(400).json({ error: "Выберите или создайте профиль вахтовика" })
 	if (resident_id && !db.prepare("SELECT id FROM residents WHERE id = ?").get(resident_id)) {
@@ -1440,17 +1670,18 @@ api.put("/placements/:id", requireRole("editor"), (req, res) => {
 	if (!canTransition(current.stage, stage)) {
 		return res.status(409).json({ error: "Недопустимый переход стадии брони" })
 	}
-	const conflict = findConflict(current.bed_id, date_from, date_to, req.params.id)
+	const conflict = findConflict(bedId, date_from, date_to, req.params.id)
 	if (conflict) {
 		return res.status(409).json({
 			error: `Место занято: ${conflict.who} (${conflict.date_from} – ${conflict.date_to})`,
 		})
 	}
 	if (stage !== "cancelled") {
-		const block = findBlock(current.bed_id, date_from, date_to)
+		const block = findBlock(bedId, date_from, date_to)
 		if (block) return res.status(409).json({ error: `Номер на ремонте: ${block.date_from} – ${block.date_to}${block.reason ? ` · ${block.reason}` : ""}` })
 	}
-	db.prepare("UPDATE placements SET resident_id=?, status_id=?, stage=?, date_from=?, date_to=?, comment=? WHERE id=?").run(
+	db.prepare("UPDATE placements SET bed_id=?, resident_id=?, status_id=?, stage=?, date_from=?, date_to=?, comment=? WHERE id=?").run(
+		bedId,
 		resident_id || null,
 		status_id,
 		stage,

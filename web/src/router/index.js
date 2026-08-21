@@ -9,8 +9,11 @@ const routes = [
 		meta: { user: true },
 		children: [
 			{ path: "", name: "resident-home", component: () => import("@/pages/resident/Home.vue") },
-			{ path: "placement", name: "resident-placement", component: () => import("@/pages/resident/Placement.vue") },
-			{ path: "roommates", name: "resident-roommates", component: () => import("@/pages/resident/Roommates.vue") },
+			{ path: "room", name: "resident-room", component: () => import("@/pages/resident/Room.vue") },
+			{ path: "plan", name: "resident-plan", component: () => import("@/pages/resident/Plan.vue") },
+			// «Размещение» и «Соседи» переехали внутрь «Мой номер»
+			{ path: "placement", redirect: "/me/room" },
+			{ path: "roommates", redirect: "/me/room" },
 			{ path: "hotel", name: "resident-hotel", component: () => import("@/pages/resident/Hotel.vue") },
 			{ path: "issues", name: "resident-issues", component: () => import("@/pages/resident/Issues.vue") },
 			{ path: "profile", name: "resident-profile", component: () => import("@/pages/resident/Profile.vue") },

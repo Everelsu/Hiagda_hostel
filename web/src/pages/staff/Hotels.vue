@@ -8,7 +8,7 @@ import Icon from "@/components/Icon.vue"
 import MapView from "@/components/MapView.vue"
 import Stars from "@/components/Stars.vue"
 import {
-	PageHeader, Tabs, Card, DataTable, Drawer, Field, Input, Textarea, Select, Button, IconButton,
+	PageHeader, Tabs, Card, Drawer, Field, Input, Textarea, Select, Button, IconButton,
 	Chip, Avatar, EmptyState, confirm,
 } from "@/ui"
 
@@ -25,11 +25,37 @@ const viewOptions = [
 const hotels = ref([])
 const rooms = ref([])
 const amenities = ref([])
+const mapStats = ref([])
 const loading = ref(true)
 
+// Фильтры вкладки «Номера»
+const roomQuery = ref("")
+const roomHotel = ref("")
+const roomClass = ref("")
+
 async function loadAll() {
-	;[hotels.value, rooms.value, amenities.value] = await Promise.all([api("/hotels"), api("/rooms"), api("/amenities")])
+	;[hotels.value, rooms.value, amenities.value, mapStats.value] = await Promise.all([
+		api("/hotels"),
+		api("/rooms"),
+		api("/amenities"),
+		api("/map").catch(() => []),
+	])
 }
+
+// Загрузка по домам берётся из того же источника, что и карта
+const statsFor = (id) => mapStats.value.find((m) => m.id === id) || null
+
+const visibleRooms = computed(() => {
+	const q = roomQuery.value.trim().toLowerCase()
+	return rooms.value.filter((r) => {
+		if (roomHotel.value && String(r.hotel_id) !== String(roomHotel.value)) return false
+		if (roomClass.value && r.class_name !== roomClass.value) return false
+		if (!q) return true
+		return [r.number, r.class_name, r.description].filter(Boolean).some((v) => String(v).toLowerCase().includes(q))
+	})
+})
+const roomClassOptions = computed(() => [...new Set(rooms.value.map((r) => r.class_name).filter(Boolean))])
+const amenityById = computed(() => new Map(amenities.value.map((a) => [a.id, a])))
 onMounted(async () => {
 	try {
 		await loadAll()
@@ -187,12 +213,6 @@ async function uploadHotelImg(m, e) {
 
 /* ---- Номер ---- */
 const roomModal = ref(null)
-const roomColumns = [
-	{ key: "number", label: "Номер", sortable: true },
-	{ key: "hotel_name", label: "Гостиница", sortable: true },
-	{ key: "class_name", label: "Тип" },
-	{ key: "capacity", label: "Мест", align: "center" },
-]
 function newRoom() {
 	roomModal.value = { hotel_id: hotels.value[0]?.id, class_id: "", number: "", floor: "", capacity: 1, description: "", amenity_ids: [], images: [] }
 }
@@ -274,29 +294,83 @@ onMounted(async () => {
 
 		<!-- Гостиницы -->
 		<div v-if="view === 'hotels'" class="hotels-grid">
-			<Card v-for="h in hotels" :key="h.id" interactive pad="md" @click="canEdit && editHotel(h)">
-				<div class="row" style="gap: var(--gap-md)">
+			<article v-for="h in hotels" :key="h.id" class="hcard" @click="canEdit && editHotel(h)">
+				<div class="hcard-head">
 					<Avatar :name="h.name" size="2.6rem" />
 					<div class="grow">
-						<div class="contrast" style="font-weight: 700">{{ h.name }}</div>
-						<div class="muted" style="font-size: var(--font-size-sm)">{{ [h.settlement, h.address].filter(Boolean).join(" · ") || "—" }}</div>
+						<div class="hname">{{ h.name }}</div>
+						<div class="muted hsub">{{ [h.settlement, h.address].filter(Boolean).join(" · ") || "Адрес не указан" }}</div>
 					</div>
 					<IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click.stop="removeHotel(h)" />
 				</div>
-			</Card>
+
+				<template v-if="statsFor(h.id)">
+					<div class="hbar" :title="`Занято ${statsFor(h.id).occupancy}%`">
+						<span :style="{ width: statsFor(h.id).occupancy + '%' }" />
+					</div>
+					<div class="hstats">
+						<span><b>{{ statsFor(h.id).rooms }}</b> номеров</span>
+						<span><b>{{ statsFor(h.id).free }}</b> свободно</span>
+						<span><b>{{ statsFor(h.id).beds }}</b> мест</span>
+						<span class="occ">{{ statsFor(h.id).occupancy }}% занято</span>
+					</div>
+					<div v-if="statsFor(h.id).repair || statsFor(h.id).issues" class="hflags">
+						<Chip v-if="statsFor(h.id).repair" color="var(--color-orange)" dot>ремонт: {{ statsFor(h.id).repair }}</Chip>
+						<Chip v-if="statsFor(h.id).issues" color="var(--color-red)" dot>заявок: {{ statsFor(h.id).issues }}</Chip>
+					</div>
+				</template>
+
+				<div class="hfoot muted">
+					<span v-if="h.phone"><Icon name="phone" size="0.85rem" /> {{ h.phone }}</span>
+					<span v-if="h.check_out"><Icon name="clock" size="0.85rem" /> выезд {{ h.check_out }}</span>
+					<span v-if="canEdit" class="edit-hint"><Icon name="pencil" size="0.85rem" /> изменить</span>
+				</div>
+			</article>
 			<EmptyState v-if="!loading && !hotels.length" icon="building" title="Гостиниц нет" />
 		</div>
 
 		<!-- Номера -->
-		<DataTable v-else :columns="roomColumns" :rows="rooms" :loading="loading" @row-click="canEdit && editRoom($event)" empty-title="Номеров нет" empty-icon="bed">
-			<template #cell-number="{ row }"><b class="contrast">№ {{ row.number }}</b><span v-if="row.floor != null" class="muted" style="font-size: var(--font-size-xs)"> · этаж {{ row.floor }}</span></template>
-			<template #cell-class_name="{ value }"><Chip>{{ value || "—" }}</Chip></template>
-			<template #actions="{ row }">
-				<IconButton icon="download" label="Отчёт в Excel" size="sm" @click="roomReport(row)" />
-				<IconButton v-if="canEdit" icon="pencil" label="Изменить" size="sm" @click="editRoom(row)" />
-				<IconButton v-if="canEdit" icon="trash" label="Удалить" size="sm" variant="danger" @click="removeRoom(row)" />
-			</template>
-		</DataTable>
+		<template v-else>
+			<Card pad="md" class="rfilters">
+				<Input v-model="roomQuery" placeholder="Поиск по номеру или описанию…" style="flex: 1; min-width: 180px" />
+				<Select v-model="roomHotel" style="width: auto">
+					<option value="">Все дома</option>
+					<option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option>
+				</Select>
+				<Select v-model="roomClass" style="width: auto">
+					<option value="">Все типы</option>
+					<option v-for="c in roomClassOptions" :key="c" :value="c">{{ c }}</option>
+				</Select>
+				<span class="muted rcount">{{ visibleRooms.length }} из {{ rooms.length }}</span>
+			</Card>
+
+			<EmptyState v-if="!loading && !visibleRooms.length" icon="bed" title="Номеров не найдено" text="Измените фильтры или добавьте номер." />
+			<div v-else class="rooms-grid">
+				<article v-for="r in visibleRooms" :key="r.id" class="rcard" @click="canEdit && editRoom(r)">
+					<div class="rcard-head">
+						<span class="rnum">№ {{ r.number }}</span>
+						<Chip v-if="r.class_name">{{ r.class_name }}</Chip>
+						<span class="grow" />
+						<span class="rcap"><Icon name="bed" size="0.9rem" /> {{ r.capacity }}</span>
+					</div>
+					<div class="muted rmeta">
+						{{ r.hotel_name }}<template v-if="r.floor != null"> · этаж {{ r.floor }}</template>
+					</div>
+					<p v-if="r.description" class="rdesc">{{ r.description }}</p>
+					<div v-if="r.amenity_ids?.length" class="ramen">
+						<span v-for="id in r.amenity_ids.slice(0, 6)" :key="id" class="ra" :title="amenityById.get(id)?.name">
+							<Icon :name="amenityIcon(amenityById.get(id)?.icon)" size="0.9rem" />
+						</span>
+						<span v-if="r.amenity_ids.length > 6" class="ra more">+{{ r.amenity_ids.length - 6 }}</span>
+					</div>
+					<div class="rcard-foot">
+						<IconButton icon="download" label="Отчёт в Excel" size="sm" @click.stop="roomReport(r)" />
+						<IconButton v-if="canEdit" icon="pencil" label="Изменить" size="sm" @click.stop="editRoom(r)" />
+						<IconButton v-if="canEdit" icon="trash" label="Удалить" size="sm" variant="danger" @click.stop="removeRoom(r)" />
+					</div>
+				</article>
+			</div>
+		</template>
 
 		<!-- Drawer гостиницы -->
 		<Drawer v-if="hotelModal" :title="hotelModal.id ? hotelModal.name : 'Новая гостиница'" width="600px" @close="hotelModal = null">
@@ -354,7 +428,14 @@ onMounted(async () => {
 			<template v-else-if="hotelTab === 'reviews'">
 				<EmptyState v-if="!hotelModal.reviews?.length" icon="message-square" text="Отзывов пока нет" />
 				<div v-for="r in hotelModal.reviews" :key="r.id" class="review">
-					<div class="spread"><b class="contrast">{{ r.resident_name || "Аноним" }}</b> <Stars :model-value="r.rating" readonly /></div>
+					<div class="spread">
+					<span class="row" style="gap: var(--gap-sm)">
+						<b class="contrast">{{ r.resident_name || "Аноним" }}</b>
+						<Chip v-if="r.room_number" color="var(--color-blue)" dot>№ {{ r.room_number }}</Chip>
+						<Chip v-else dot>о доме</Chip>
+					</span>
+					<Stars :model-value="r.rating" readonly />
+				</div>
 					<div v-if="r.text" style="font-size: var(--font-size-sm)">{{ r.text }}</div>
 					<div class="row" style="margin-top: 4px"><Input v-model="r._reply" placeholder="Ответ администрации…" /><Button size="sm" @click="replyReview(hotelModal, r)">Ответить</Button></div>
 				</div>
@@ -411,8 +492,169 @@ onMounted(async () => {
 <style scoped>
 .hotels-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+	grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
 	gap: var(--gap-md);
+}
+/* Карточка дома: имя, загрузка, дежурные факты */
+.hcard {
+	display: grid;
+	gap: var(--gap-sm);
+	padding: var(--gap-md);
+	background: var(--color-raised-bg);
+	border: 1px solid var(--color-divider);
+	border-radius: var(--radius-lg);
+	cursor: pointer;
+	transition: border-color var(--speed-fast);
+}
+.hcard:hover {
+	border-color: var(--color-brand);
+}
+.hcard-head {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-md);
+}
+.hname {
+	font-weight: 800;
+	color: var(--color-contrast);
+}
+.hsub {
+	font-size: var(--font-size-xs);
+}
+.hbar {
+	height: 6px;
+	border-radius: var(--radius-max);
+	background: var(--color-bg);
+	overflow: hidden;
+}
+.hbar span {
+	display: block;
+	height: 100%;
+	border-radius: var(--radius-max);
+	background: var(--color-brand);
+}
+.hstats {
+	display: flex;
+	gap: var(--gap-md);
+	flex-wrap: wrap;
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+}
+.hstats b {
+	color: var(--color-contrast);
+	font-size: var(--font-size-sm);
+}
+.hstats .occ {
+	margin-left: auto;
+}
+.hflags {
+	display: flex;
+	gap: var(--gap-xs);
+	flex-wrap: wrap;
+}
+.hfoot {
+	display: flex;
+	gap: var(--gap-md);
+	flex-wrap: wrap;
+	font-size: var(--font-size-xs);
+	padding-top: var(--gap-sm);
+	border-top: 1px solid var(--color-divider);
+}
+.hfoot span {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+.edit-hint {
+	margin-left: auto;
+	opacity: 0.7;
+}
+
+/* Номера */
+.rfilters {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	flex-wrap: wrap;
+}
+.rcount {
+	font-size: var(--font-size-xs);
+	white-space: nowrap;
+}
+.rooms-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+	gap: var(--gap-md);
+}
+.rcard {
+	display: grid;
+	gap: var(--gap-xs);
+	align-content: start;
+	padding: var(--gap-md);
+	background: var(--color-raised-bg);
+	border: 1px solid var(--color-divider);
+	border-radius: var(--radius-lg);
+	cursor: pointer;
+	transition: border-color var(--speed-fast);
+}
+.rcard:hover {
+	border-color: var(--color-brand);
+}
+.rcard-head {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+}
+.rnum {
+	font-weight: 800;
+	font-size: var(--font-size-lg);
+	color: var(--color-contrast);
+}
+.rcap {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: var(--font-size-sm);
+	font-weight: 700;
+	color: var(--color-secondary);
+}
+.rmeta {
+	font-size: var(--font-size-xs);
+}
+.rdesc {
+	margin: 0;
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+.ramen {
+	display: flex;
+	gap: 4px;
+	flex-wrap: wrap;
+}
+.ra {
+	display: grid;
+	place-items: center;
+	width: 1.6rem;
+	height: 1.6rem;
+	border-radius: var(--radius-sm);
+	background: var(--color-bg);
+	color: var(--color-brand);
+}
+.ra.more {
+	font-size: 10px;
+	font-weight: 700;
+	color: var(--color-secondary);
+}
+.rcard-foot {
+	display: flex;
+	gap: var(--gap-xs);
+	justify-content: flex-end;
+	padding-top: var(--gap-xs);
+	border-top: 1px solid var(--color-divider);
 }
 .two {
 	display: grid;

@@ -152,6 +152,20 @@ db.exec(`
 		created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 	);
 
+	-- Геометрия плана этажа: всё, что не номер (коридоры, лестницы, санузлы, выходы).
+	-- Координаты — в клетках сетки плана, целые числа.
+	CREATE TABLE IF NOT EXISTS plan_shapes (
+		id       INTEGER PRIMARY KEY AUTOINCREMENT,
+		hotel_id INTEGER NOT NULL REFERENCES hotels(id) ON DELETE CASCADE,
+		floor    INTEGER NOT NULL DEFAULT 1,
+		kind     TEXT NOT NULL DEFAULT 'other',
+		label    TEXT,
+		x        INTEGER NOT NULL DEFAULT 0,
+		y        INTEGER NOT NULL DEFAULT 0,
+		w        INTEGER NOT NULL DEFAULT 2,
+		h        INTEGER NOT NULL DEFAULT 2
+	);
+
 	CREATE TABLE IF NOT EXISTS audit_log (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
 		user_id    INTEGER,
@@ -203,7 +217,9 @@ db.exec(`
 	CREATE INDEX IF NOT EXISTS idx_room_blocks_dates ON room_blocks(date_from, date_to);
 	CREATE INDEX IF NOT EXISTS idx_images_owner ON images(owner_type, owner_id);
 	CREATE INDEX IF NOT EXISTS idx_reviews_hotel ON reviews(hotel_id);
+	CREATE INDEX IF NOT EXISTS idx_reviews_resident ON reviews(resident_id);
 	CREATE INDEX IF NOT EXISTS idx_room_issues_lookup ON room_issues(room_id, status);
+	CREATE INDEX IF NOT EXISTS idx_plan_shapes_floor ON plan_shapes(hotel_id, floor);
 `);
 
 
@@ -236,11 +252,22 @@ addColumn("residents", "photo", "TEXT")
 addColumn("residents", "show_contacts", "INTEGER NOT NULL DEFAULT 0")
 addColumn("reviews", "reply", "TEXT")
 addColumn("reviews", "reply_at", "TEXT")
+// room_id = NULL → отзыв о доме, иначе — отзыв о конкретном номере.
+addColumn("reviews", "room_id", "INTEGER REFERENCES rooms(id) ON DELETE CASCADE")
 addColumn("users", "announcements_seen_at", "TEXT")
 addColumn("room_issues", "photo", "TEXT")
 addColumn("places", "latitude", "TEXT")
 addColumn("places", "longitude", "TEXT")
 addColumn("places", "icon", "TEXT")
+// Положение номера на плане этажа (клетки сетки). NULL = ещё не размещён на плане.
+addColumn("rooms", "plan_x", "INTEGER")
+addColumn("rooms", "plan_y", "INTEGER")
+addColumn("rooms", "plan_w", "INTEGER")
+addColumn("rooms", "plan_h", "INTEGER")
+// Маска занятых клеток внутри габарита: строки из 0/1 через "/" ("111/100" — угловая комната).
+// NULL = обычный прямоугольник.
+addColumn("rooms", "plan_cells", "TEXT")
+addColumn("plan_shapes", "cells", "TEXT")
 
 if (!hasColumn("users", "resident_id")) {
 	const migrateUsers = db.transaction(() => {
