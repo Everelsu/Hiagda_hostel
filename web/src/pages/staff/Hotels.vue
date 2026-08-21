@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from "vue"
-import { api, post, put, del, uploadFile } from "@/api/client"
+import { api, post, put, del, uploadFile, download } from "@/api/client"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
 import { amenityIcon } from "@/icons"
@@ -199,6 +199,9 @@ function newRoom() {
 function editRoom(r) {
 	roomModal.value = { ...r, class_id: r.class_id || "", amenity_ids: [...(r.amenity_ids || [])] }
 }
+function roomReport(r) {
+	download("/report/room/" + r.id)
+}
 async function saveRoom() {
 	const m = roomModal.value
 	if (!m.number?.trim()) return toast.error("Укажите номер")
@@ -289,8 +292,9 @@ onMounted(async () => {
 			<template #cell-number="{ row }"><b class="contrast">№ {{ row.number }}</b><span v-if="row.floor != null" class="muted" style="font-size: var(--font-size-xs)"> · этаж {{ row.floor }}</span></template>
 			<template #cell-class_name="{ value }"><Chip>{{ value || "—" }}</Chip></template>
 			<template #actions="{ row }">
-				<IconButton icon="pencil" label="Изменить" size="sm" @click="editRoom(row)" />
-				<IconButton icon="trash" label="Удалить" size="sm" variant="danger" @click="removeRoom(row)" />
+				<IconButton icon="download" label="Отчёт в Excel" size="sm" @click="roomReport(row)" />
+				<IconButton v-if="canEdit" icon="pencil" label="Изменить" size="sm" @click="editRoom(row)" />
+				<IconButton v-if="canEdit" icon="trash" label="Удалить" size="sm" variant="danger" @click="removeRoom(row)" />
 			</template>
 		</DataTable>
 
@@ -396,6 +400,7 @@ onMounted(async () => {
 			</Field>
 			<p v-else class="muted" style="font-size: var(--font-size-xs)">Сохраните номер, затем добавьте фото.</p>
 			<template #foot>
+				<Button v-if="roomModal.id" icon="download" @click="roomReport(roomModal)">Excel</Button>
 				<Button variant="ghost" @click="roomModal = null">Отмена</Button>
 				<Button variant="primary" :loading="busy" @click="saveRoom">Сохранить</Button>
 			</template>

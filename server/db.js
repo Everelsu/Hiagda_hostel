@@ -2,10 +2,12 @@ const path = require("node:path")
 const fs = require("node:fs")
 const Database = require("better-sqlite3")
 
-const dataDir = path.join(__dirname, "..", "data")
+// Путь к БД можно переопределить через NOCHOTEL_DB (деплой / изолированные тесты).
+const dbPath = process.env.NOCHOTEL_DB || path.join(__dirname, "..", "data", "nochotel.db")
+const dataDir = path.dirname(dbPath)
 fs.mkdirSync(dataDir, { recursive: true })
 
-const db = new Database(path.join(dataDir, "nochotel.db"))
+const db = new Database(dbPath)
 db.pragma("journal_mode = WAL")
 db.pragma("foreign_keys = ON")
 
@@ -15,7 +17,7 @@ db.exec(`
 		username      TEXT NOT NULL UNIQUE,
 		password_hash TEXT NOT NULL,
 		full_name     TEXT,
-		role          TEXT NOT NULL CHECK (role IN ('admin','editor','viewer','resident')),
+		role          TEXT NOT NULL CHECK (role IN ('admin','editor','observer','viewer','resident')),
 		resident_id   INTEGER REFERENCES residents(id) ON DELETE SET NULL,
 		created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 	);
@@ -271,5 +273,37 @@ try {
 
 // Роль 'resident' переименована в 'viewer' (конечный пользователь, портал /me)
 db.prepare("UPDATE users SET role = 'viewer' WHERE role = 'resident'").run()
+
+// Роль 'observer' — read-only сотрудник (портал /app без права правки). Для существующих
+// БД расширяем CHECK через пересоздание таблицы (SQLite не умеет ALTER CHECK).
+const usersDDL = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get()?.sql || ""
+if (!usersDDL.includes("'observer'")) {
+	const colList = columns("users").map((c) => c.name).join(", ")
+	const rebuild = db.transaction(() => {
+		db.exec(`
+			CREATE TABLE users_new (
+				id            INTEGER PRIMARY KEY AUTOINCREMENT,
+				username      TEXT NOT NULL UNIQUE,
+				password_hash TEXT NOT NULL,
+				full_name     TEXT,
+				role          TEXT NOT NULL CHECK (role IN ('admin','editor','observer','viewer','resident')),
+				resident_id   INTEGER REFERENCES residents(id) ON DELETE SET NULL,
+				created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+				must_change_password INTEGER NOT NULL DEFAULT 0,
+				announcements_seen_at TEXT
+			);
+			INSERT INTO users_new (${colList}) SELECT ${colList} FROM users;
+			DROP TABLE users;
+			ALTER TABLE users_new RENAME TO users;
+		`)
+	})
+	db.pragma("foreign_keys = OFF")
+	rebuild()
+	db.pragma("foreign_keys = ON")
+	db.exec("CREATE INDEX IF NOT EXISTS idx_users_resident ON users(resident_id)")
+	try {
+		db.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_resident ON users(resident_id) WHERE resident_id IS NOT NULL")
+	} catch {}
+}
 
 module.exports = db

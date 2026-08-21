@@ -110,7 +110,14 @@ const tx = db.transaction(() => {
 			"viewer",
 			proResId,
 		)
-		console.log("Создан демо-пользователь (Просмотр): логин vahta / пароль vahta")
+		console.log("Создан демо-вахтовик: логин vahta / пароль vahta")
+
+		db.prepare("INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,'observer')").run(
+			"prosmotr",
+			bcrypt.hashSync("prosmotr", 10),
+			"Наблюдатель (только просмотр)",
+		)
+		console.log("Создан сотрудник (Просмотр): логин prosmotr / пароль prosmotr")
 
 		const adminId = db.prepare("INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,'admin')").run(
 			"admin",

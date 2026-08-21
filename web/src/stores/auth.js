@@ -1,8 +1,8 @@
 import { defineStore } from "pinia"
 import { post, setToken } from "@/api/client"
 
-// Персонал. viewer — это конечный пользователь (вахтовик), не персонал.
-const STAFF_RANK = { editor: 1, admin: 2 }
+// Персонал: observer (только просмотр) < editor < admin. viewer — вахтовик, не персонал.
+const STAFF_RANK = { observer: 1, editor: 2, admin: 3 }
 
 export const useAuthStore = defineStore("auth", {
 	state: () => ({

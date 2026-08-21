@@ -14,7 +14,7 @@ const counters = useCounters()
 
 const theme = ref(document.documentElement.getAttribute("data-theme") || "dark")
 const mobileOpen = ref(false)
-const ROLE_LABEL = { admin: "Администратор", editor: "Редактор", viewer: "Просмотр" }
+const ROLE_LABEL = { admin: "Администратор", editor: "Редактор", observer: "Просмотр", viewer: "Вахтовик" }
 
 const groups = computed(() => STAFF_NAV.filter((g) => !g.admin || auth.can("admin")))
 const pageTitle = computed(() => {

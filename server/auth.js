@@ -1,8 +1,30 @@
 const jwt = require("jsonwebtoken")
+const crypto = require("node:crypto")
+const fs = require("node:fs")
+const path = require("node:path")
 
-const SECRET = process.env.JWT_SECRET || "nochotel-dev-secret-change-me"
-// Иерархия прав персонала. viewer — это конечный пользователь (вахтовик), он НЕ персонал.
-const ROLE_RANK = { editor: 1, admin: 2 }
+// Секрет для подписи JWT. Приоритет: переменная окружения JWT_SECRET (для деплоя),
+// иначе — случайный секрет, сохранённый в data/.jwtsecret (стабилен между перезапусками,
+// не лежит в коде). Хардкод убран, чтобы токены нельзя было подделать по известному значению.
+function resolveSecret() {
+	if (process.env.JWT_SECRET) return process.env.JWT_SECRET
+	const dir = path.join(__dirname, "..", "data")
+	fs.mkdirSync(dir, { recursive: true })
+	const file = path.join(dir, ".jwtsecret")
+	try {
+		const saved = fs.readFileSync(file, "utf8").trim()
+		if (saved) return saved
+	} catch {}
+	const generated = crypto.randomBytes(32).toString("hex")
+	try {
+		fs.writeFileSync(file, generated, { mode: 0o600 })
+	} catch {}
+	return generated
+}
+
+const SECRET = resolveSecret()
+// Иерархия прав персонала. observer < editor < admin. viewer (вахтовик) — НЕ персонал.
+const ROLE_RANK = { observer: 1, editor: 2, admin: 3 }
 
 function sign(user) {
 	return jwt.sign(

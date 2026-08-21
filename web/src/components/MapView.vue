@@ -74,10 +74,10 @@ onMounted(async () => {
 	await nextTick()
 	map = L.map(el.value, { scrollWheelZoom: true }).setView(props.center, props.zoom)
 	map.attributionControl.setPrefix(false)
-	L.tileLayer("https://tile{s}.maps.2gis.com/tiles?x={x}&y={y}&z={z}&v=1", {
-		subdomains: ["0", "1", "2", "3"],
-		maxZoom: 18,
-		attribution: "© 2ГИС",
+	L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+		subdomains: ["a", "b", "c"],
+		maxZoom: 19,
+		attribution: "© OpenStreetMap",
 	}).addTo(map)
 	if (props.clickToPick) map.on("click", (e) => emit("pick", { lat: e.latlng.lat, lng: e.latlng.lng }))
 	render()

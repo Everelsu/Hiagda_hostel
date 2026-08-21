@@ -20,6 +20,8 @@ const canTransition = (from, to) => from === to || STAGE_TRANSITIONS[from]?.incl
 const STAGE_LABELS = { expected: "Ожидается", checked_in: "Проживает", checked_out: "Выехал", cancelled: "Отменён" }
 const stageLabel = (stage) => STAGE_LABELS[stage] || STAGE_LABELS.expected
 const publicUser = (u) => ({ id: u.id, username: u.username, full_name: u.full_name, role: u.role, resident_id: u.resident_id ?? null, must_change_password: !!u.must_change_password })
+const MIN_PASSWORD = 6
+const weakPassword = (p) => !p || String(p).length < MIN_PASSWORD
 const imagesFor = (ownerType, ownerId) =>
 	db.prepare("SELECT id, url FROM images WHERE owner_type = ? AND owner_id = ? ORDER BY sort, id").all(ownerType, ownerId)
 
@@ -78,7 +80,8 @@ api.post("/register-admin", (req, res) => {
 		return res.status(403).json({ error: "Администратор уже создан" })
 	}
 	const { username, password, full_name } = req.body || {}
-	if (!username || !password) return res.status(400).json({ error: "Укажите логин и пароль" })
+	if (!username) return res.status(400).json({ error: "Укажите логин" })
+	if (weakPassword(password)) return res.status(400).json({ error: `Пароль слишком короткий (мин. ${MIN_PASSWORD} символов)` })
 	const info = db
 		.prepare("INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,'admin')")
 		.run(username, bcrypt.hashSync(password, 10), full_name || null)
@@ -146,7 +149,7 @@ api.get("/me", (req, res) => res.json(req.user))
 
 api.post("/me/password", (req, res) => {
 	const { current, next } = req.body || {}
-	if (!next || next.length < 4) return res.status(400).json({ error: "Новый пароль слишком короткий (мин. 4 символа)" })
+	if (weakPassword(next)) return res.status(400).json({ error: `Новый пароль слишком короткий (мин. ${MIN_PASSWORD} символов)` })
 	const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id)
 	if (!user || !bcrypt.compareSync(current || "", user.password_hash)) {
 		return res.status(400).json({ error: "Текущий пароль неверный" })
@@ -298,6 +301,7 @@ api.post("/upload", uploadImage.single("file"), (req, res) => {
 })
 
 const isStaffUser = (u) => u?.role === "admin" || u?.role === "editor"
+const canViewAllIssues = (u) => isStaffUser(u) || u?.role === "observer"
 
 function announcementsFor(hotelId) {
 	return db
@@ -358,7 +362,7 @@ api.get("/me/issues", (req, res) => res.json(myIssues(req.user.id)))
 api.get("/issues/:id/comments", (req, res) => {
 	const issue = db.prepare("SELECT user_id FROM room_issues WHERE id = ?").get(req.params.id)
 	if (!issue) return res.status(404).json({ error: "Заявка не найдена" })
-	if (!isStaffUser(req.user) && issue.user_id !== req.user.id) return res.status(403).json({ error: "Недостаточно прав" })
+	if (!canViewAllIssues(req.user) && issue.user_id !== req.user.id) return res.status(403).json({ error: "Недостаточно прав" })
 	res.json(
 		db
 			.prepare(
@@ -807,7 +811,7 @@ api.get("/plan", (req, res) => {
 	}
 })
 
-const ROLES = ["admin", "editor", "viewer"]
+const ROLES = ["admin", "editor", "observer", "viewer"]
 api.get("/users", requireRole("admin"), (_req, res) => {
 	res.json(
 		db
@@ -821,9 +825,10 @@ api.get("/users", requireRole("admin"), (_req, res) => {
 api.post("/users", requireRole("admin"), (req, res) => {
 	const { username, password, full_name, role } = req.body || {}
 	const resident_id = role === "viewer" ? Number(req.body?.resident_id) || null : null
-	if (!username || !password || !ROLES.includes(role)) {
-		return res.status(400).json({ error: "Заполните логин, пароль и роль" })
+	if (!username || !ROLES.includes(role)) {
+		return res.status(400).json({ error: "Заполните логин и роль" })
 	}
+	if (weakPassword(password)) return res.status(400).json({ error: `Пароль слишком короткий (мин. ${MIN_PASSWORD} символов)` })
 	if (role === "viewer" && !resident_id) {
 		return res.status(400).json({ error: "Для роли «Просмотр» выберите проживающего" })
 	}
@@ -861,7 +866,8 @@ api.put("/users/:id", requireRole("admin"), (req, res) => {
 		resident_id,
 		id,
 	)
-	if (password) {
+	if (password !== undefined && password !== "") {
+		if (weakPassword(password)) return res.status(400).json({ error: `Пароль слишком короткий (мин. ${MIN_PASSWORD} символов)` })
 		db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(bcrypt.hashSync(password, 10), id)
 	}
 	res.json({ ok: true })
@@ -1648,4 +1654,9 @@ app.get("*", (req, res) => {
 })
 
 const PORT = process.env.PORT || 3000
-app.listen(PORT, () => console.log(`NochOtel запущен: http://localhost:${PORT}`))
+const server = app.listen(PORT, () => {
+	const addr = server.address()
+	console.log(`NochOtel запущен: http://localhost:${typeof addr === "object" && addr ? addr.port : PORT}`)
+})
+
+module.exports = { app, server }
