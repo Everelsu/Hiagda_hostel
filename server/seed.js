@@ -2,13 +2,13 @@ const db = require("./db")
 const bcrypt = require("bcryptjs")
 
 const tx = db.transaction(() => {
-	if (db.prepare("SELECT COUNT(*) c FROM statuses").get().c === 0) {
-		const ins = db.prepare("INSERT INTO statuses (name, color, sort) VALUES (?,?,?)")
-		ins.run("Свободно", "#3a3f47", 0)
+	// Системные состояния (Свободно / Ремонт) создаёт db.js — они не назначаются броням.
+	// Здесь только статусы, которые оператор реально ставит человеку.
+	if (db.prepare("SELECT COUNT(*) c FROM statuses WHERE kind = 'booking'").get().c === 0) {
+		const ins = db.prepare("INSERT INTO statuses (name, color, sort, kind) VALUES (?,?,?,'booking')")
 		ins.run("Забронировано", "#5fc8ff", 1)
 		ins.run("Проживает", "#1bd96a", 2)
-		ins.run("Ремонт", "#ff8a5c", 3)
-		console.log("Созданы базовые статусы")
+		console.log("Созданы базовые статусы брони")
 	}
 
 	if (db.prepare("SELECT COUNT(*) c FROM room_classes").get().c === 0) {

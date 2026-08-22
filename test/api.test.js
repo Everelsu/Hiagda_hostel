@@ -204,6 +204,107 @@ test("справочники отдают счётчик использован�
 	assert.equal(after.json.find((c) => c.id === created.json.id).name, "Люкс+")
 })
 
+test("угловые/Г-образные помещения: маска клеток сохраняется", async () => {
+	const rooms = await call("GET", "/rooms", { token: adminToken })
+	const room = rooms.json[0]
+
+	const saved = await call("PUT", "/plan/layout", {
+		token: adminToken,
+		body: {
+			hotel_id: room.hotel_id,
+			floor: room.floor ?? 1,
+			// Г-образная комната: вырезан правый нижний угол
+			rooms: [{ id: room.id, plan_x: 0, plan_y: 0, plan_w: 3, plan_h: 2, plan_cells: "111/100" }],
+			shapes: [{ kind: "corridor", x: 0, y: 4, w: 4, h: 2, cells: "1111/0011" }],
+		},
+	})
+	assert.equal(saved.status, 200)
+
+	const plan = await call("GET", `/plan?hotel_id=${room.hotel_id}`, { token: adminToken })
+	assert.equal(plan.json.rooms.find((r) => r.id === room.id).plan_cells, "111/100")
+	assert.equal(plan.json.shapes[0].cells, "1111/0011")
+
+	// сплошная маска бессмысленна — сервер сводит её к обычному прямоугольнику
+	await call("PUT", "/plan/layout", {
+		token: adminToken,
+		body: {
+			hotel_id: room.hotel_id,
+			floor: room.floor ?? 1,
+			rooms: [{ id: room.id, plan_x: 0, plan_y: 0, plan_w: 2, plan_h: 2, plan_cells: "11/11" }],
+			shapes: [],
+		},
+	})
+	const plain = await call("GET", `/plan?hotel_id=${room.hotel_id}`, { token: adminToken })
+	assert.equal(plain.json.rooms.find((r) => r.id === room.id).plan_cells, null, "сплошная маска не хранится")
+})
+
+test("ремонт ставится без профиля проживающего", async () => {
+	const rooms = await call("GET", "/rooms", { token: adminToken })
+	const room = rooms.json[0]
+
+	const block = await call("POST", `/rooms/${room.id}/blocks`, {
+		token: adminToken,
+		body: { date_from: "2027-03-01", date_to: "2027-03-10", reason: "Замена окна" },
+	})
+	assert.equal(block.status, 200, "ремонт не требует resident_id")
+
+	// на время ремонта место занять нельзя
+	const clash = await call("POST", "/placements", {
+		token: adminToken,
+		body: { bed_id: room.beds[0].id, resident_id: residentId, status_id: statusId, date_from: "2027-03-02", date_to: "2027-03-05" },
+	})
+	assert.equal(clash.status, 409)
+
+	assert.equal((await call("DELETE", `/blocks/${block.json.id}`, { token: adminToken })).status, 200)
+})
+
+// Если фронтенд новее сервера, PUT уходил в HTML-404 и превращался в «Ошибка запроса»
+test("неизвестный /api-эндпоинт отвечает JSON, а не HTML", async () => {
+	const res = await fetch(base + "/plan/nope", {
+		method: "PUT",
+		headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+		body: "{}",
+	})
+	assert.equal(res.status, 404)
+	assert.match(res.headers.get("content-type") || "", /application\/json/)
+	const body = await res.json()
+	assert.match(body.error, /не найден/i)
+	assert.match(body.error, /перезапустите сервер/i)
+})
+
+// «Свободно» = отсутствие брони, «Ремонт» = room_blocks. Ни то ни другое не вешается на человека.
+test("системные состояния нельзя назначить брони и нельзя удалить", async () => {
+	const statuses = await call("GET", "/statuses", { token: adminToken })
+	const free = statuses.json.find((s) => s.code === "free")
+	const repair = statuses.json.find((s) => s.code === "repair")
+	assert.ok(free && repair, "системные состояния создаются автоматически")
+	assert.equal(free.kind, "system")
+
+	for (const st of [free, repair]) {
+		const res = await call("POST", "/placements", {
+			token: adminToken,
+			body: { bed_id: bedId, resident_id: residentId, status_id: st.id, date_from: "2028-01-01", date_to: "2028-01-05" },
+		})
+		assert.equal(res.status, 400, `статус «${st.name}» не должен назначаться брони`)
+	}
+
+	assert.equal((await call("DELETE", `/statuses/${repair.id}`, { token: adminToken })).status, 400, "системное состояние не удаляется")
+
+	// но цвет и подпись менять можно
+	const renamed = await call("PUT", `/statuses/${repair.id}`, { token: adminToken, body: { name: "На ремонте", color: "#ff0000" } })
+	assert.equal(renamed.status, 200)
+	const after = await call("GET", "/statuses", { token: adminToken })
+	const still = after.json.find((s) => s.code === "repair")
+	assert.equal(still.name, "На ремонте")
+	assert.equal(still.kind, "system", "вид не меняется при переименовании")
+
+	// созданный вручную статус — всегда booking
+	const custom = await call("POST", "/statuses", { token: adminToken, body: { name: "Бронь брони", color: "#c78aff" } })
+	assert.equal(custom.status, 200)
+	const list = await call("GET", "/statuses", { token: adminToken })
+	assert.equal(list.json.find((s) => s.id === custom.json.id).kind, "booking")
+})
+
 test("слишком короткий пароль отклоняется", async () => {
 	const weak = await call("POST", "/users", {
 		token: adminToken,

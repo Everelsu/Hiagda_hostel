@@ -34,8 +34,9 @@ const canCreate = computed(() => {
 })
 
 onMounted(async () => {
-	statuses.value = await api("/statuses")
-	if (!statusId.value) statusId.value = statuses.value[0]?.id
+	// Только статусы брони: «Свободно» и «Ремонт» — производные состояния, их не назначают человеку
+	statuses.value = (await api("/statuses")).filter((s) => s.kind !== "system")
+	if (!statusId.value || !statuses.value.some((s) => s.id === statusId.value)) statusId.value = statuses.value[0]?.id
 	// подтянуть детали уже привязанного профиля (табельный, организация, доступ)
 	if (selected.value?.id) {
 		try {

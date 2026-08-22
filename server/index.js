@@ -21,6 +21,14 @@ const STAGE_LABELS = { expected: "Ожидается", checked_in: "Прожив
 const stageLabel = (stage) => STAGE_LABELS[stage] || STAGE_LABELS.expected
 const publicUser = (u) => ({ id: u.id, username: u.username, full_name: u.full_name, role: u.role, resident_id: u.resident_id ?? null, must_change_password: !!u.must_change_password })
 const MIN_PASSWORD = 6
+// Системные статусы (Свободно / Ремонт) — это производные состояния, а не бронь.
+// «Свободно» = брони нет, «Ремонт» = room_blocks. Назначать их человеку нельзя.
+const systemStatus = (id) => db.prepare("SELECT name, code FROM statuses WHERE id = ? AND kind = 'system'").get(id)
+const SYSTEM_STATUS_ERROR = {
+	free: "«Свободно» — это отсутствие брони, такой статус не назначается. Выберите статус брони.",
+	repair: "«Ремонт» ставится на номер целиком (протяжка в шахматке → «Поставить на ремонт»), а не бронью на человека.",
+}
+const systemStatusError = (st) => SYSTEM_STATUS_ERROR[st.code] || `Статус «${st.name}» системный и не назначается броням.`
 const weakPassword = (p) => !p || String(p).length < MIN_PASSWORD
 const imagesFor = (ownerType, ownerId) =>
 	db.prepare("SELECT id, url FROM images WHERE owner_type = ? AND owner_id = ? ORDER BY sort, id").all(ownerType, ownerId)
@@ -437,13 +445,13 @@ api.get("/me/plan", (req, res) => {
 	const floor = pl.floor ?? 1
 	const rooms = db
 		.prepare(
-			`SELECT id, number, floor, capacity, plan_x, plan_y, plan_w, plan_h
+			`SELECT id, number, floor, capacity, plan_x, plan_y, plan_w, plan_h, plan_cells
 			 FROM rooms WHERE hotel_id = ? AND IFNULL(floor, 1) = ? AND plan_x IS NOT NULL
 			 ORDER BY number`,
 		)
 		.all(pl.hotel_id, floor)
 	const shapes = db
-		.prepare("SELECT id, kind, label, x, y, w, h FROM plan_shapes WHERE hotel_id = ? AND floor = ? ORDER BY id")
+		.prepare("SELECT id, kind, label, x, y, w, h, cells FROM plan_shapes WHERE hotel_id = ? AND floor = ? ORDER BY id")
 		.all(pl.hotel_id, floor)
 	res.json({
 		available: rooms.length > 0 || shapes.length > 0,
@@ -924,7 +932,7 @@ api.get("/plan", (req, res) => {
 		}
 
 		const shapes = db
-			.prepare("SELECT id, floor, kind, label, x, y, w, h FROM plan_shapes WHERE hotel_id = ? ORDER BY id")
+			.prepare("SELECT id, floor, kind, label, x, y, w, h, cells FROM plan_shapes WHERE hotel_id = ? ORDER BY id")
 			.all(req.query.hotel_id)
 
 		res.json({ date, rooms, shapes })
@@ -946,22 +954,41 @@ api.put("/plan/layout", requireRole("editor"), (req, res) => {
 	const clamp = (v, min, max) => Math.min(max, Math.max(min, Math.round(Number(v) || 0)))
 
 	const ownRoom = db.prepare("SELECT id FROM rooms WHERE id = ? AND hotel_id = ? AND IFNULL(floor, 1) = ?")
-	const setGeom = db.prepare("UPDATE rooms SET plan_x = ?, plan_y = ?, plan_w = ?, plan_h = ? WHERE id = ?")
+	const setGeom = db.prepare("UPDATE rooms SET plan_x = ?, plan_y = ?, plan_w = ?, plan_h = ?, plan_cells = ? WHERE id = ?")
+
+	// Маска "111/101": по строке на каждый ряд габарита, 1 — клетка занята.
+	// Нормализуем под фактические w/h и отбрасываем сплошные маски (это обычный прямоугольник).
+	const normCells = (raw, w, h) => {
+		if (typeof raw !== "string" || !raw) return null
+		const rows = raw.split("/").slice(0, h)
+		const grid = []
+		for (let y = 0; y < h; y++) {
+			const row = (rows[y] || "").padEnd(w, "1").slice(0, w).replace(/[^01]/g, "1")
+			grid.push(row)
+		}
+		if (!grid.join("").includes("0")) return null
+		if (!grid.join("").includes("1")) return null
+		return grid.join("/")
+	}
 
 	const tx = db.transaction(() => {
 		for (const r of rooms) {
 			if (!ownRoom.get(Number(r.id), hotelId, floor)) continue
 			if (r.plan_x == null) {
-				setGeom.run(null, null, null, null, Number(r.id))
+				setGeom.run(null, null, null, null, null, Number(r.id))
 				continue
 			}
-			setGeom.run(clamp(r.plan_x, 0, 200), clamp(r.plan_y, 0, 200), clamp(r.plan_w, 1, 40), clamp(r.plan_h, 1, 40), Number(r.id))
+			const w = clamp(r.plan_w, 1, 40)
+			const h = clamp(r.plan_h, 1, 40)
+			setGeom.run(clamp(r.plan_x, 0, 200), clamp(r.plan_y, 0, 200), w, h, normCells(r.plan_cells, w, h), Number(r.id))
 		}
 		db.prepare("DELETE FROM plan_shapes WHERE hotel_id = ? AND floor = ?").run(hotelId, floor)
 		const insShape = db.prepare(
-			"INSERT INTO plan_shapes (hotel_id, floor, kind, label, x, y, w, h) VALUES (?,?,?,?,?,?,?,?)",
+			"INSERT INTO plan_shapes (hotel_id, floor, kind, label, x, y, w, h, cells) VALUES (?,?,?,?,?,?,?,?,?)",
 		)
 		for (const s of shapes) {
+			const w = clamp(s.w, 1, 40)
+			const h = clamp(s.h, 1, 40)
 			insShape.run(
 				hotelId,
 				floor,
@@ -969,8 +996,9 @@ api.put("/plan/layout", requireRole("editor"), (req, res) => {
 				s.label ? String(s.label).slice(0, 60) : null,
 				clamp(s.x, 0, 200),
 				clamp(s.y, 0, 200),
-				clamp(s.w, 1, 40),
-				clamp(s.h, 1, 40),
+				w,
+				h,
+				normCells(s.cells, w, h),
 			)
 		}
 	})
@@ -1305,7 +1333,7 @@ api.post("/statuses", requireRole("editor"), (req, res) => {
 	const { name, color, sort } = req.body || {}
 	if (!name || !color) return res.status(400).json({ error: "Укажите название и цвет" })
 	try {
-		const info = db.prepare("INSERT INTO statuses (name, color, sort) VALUES (?,?,?)").run(name, color, sort || 0)
+		const info = db.prepare("INSERT INTO statuses (name, color, sort, kind) VALUES (?,?,?,'booking')").run(name, color, sort || 0)
 		res.json({ id: info.lastInsertRowid })
 	} catch {
 		res.status(400).json({ error: "Такой статус уже есть" })
@@ -1313,10 +1341,15 @@ api.post("/statuses", requireRole("editor"), (req, res) => {
 })
 api.put("/statuses/:id", requireRole("editor"), (req, res) => {
 	const { name, color, sort } = req.body || {}
+	if (!name || !color) return res.status(400).json({ error: "Укажите название и цвет" })
+	// Системным состояниям можно поменять подпись и цвет, но не превратить их в статус брони
 	db.prepare("UPDATE statuses SET name = ?, color = ?, sort = ? WHERE id = ?").run(name, color, sort || 0, req.params.id)
 	res.json({ ok: true })
 })
 api.delete("/statuses/:id", requireRole("admin"), (req, res) => {
+	if (systemStatus(req.params.id)) {
+		return res.status(400).json({ error: "Системное состояние удалить нельзя — можно изменить название и цвет" })
+	}
 	try {
 		db.prepare("DELETE FROM statuses WHERE id = ?").run(req.params.id)
 		res.json({ ok: true })
@@ -1634,6 +1667,8 @@ api.post("/placements", requireRole("editor"), (req, res) => {
 		return res.status(400).json({ error: "Заполните место, статус и даты" })
 	}
 	if (!STAGES.includes(stage)) return res.status(400).json({ error: "Неизвестная стадия брони" })
+	const sysNew = systemStatus(status_id)
+	if (sysNew) return res.status(400).json({ error: systemStatusError(sysNew) })
 	if (date_to < date_from) return res.status(400).json({ error: "Дата выезда раньше даты заезда" })
 	const conflict = findConflict(bed_id, date_from, date_to)
 	if (conflict) {
@@ -1667,6 +1702,8 @@ api.put("/placements/:id", requireRole("editor"), (req, res) => {
 		return res.status(400).json({ error: "Профиль вахтовика не найден" })
 	}
 	if (!STAGES.includes(stage)) return res.status(400).json({ error: "Неизвестная стадия брони" })
+	const sysUpd = systemStatus(status_id)
+	if (sysUpd) return res.status(400).json({ error: systemStatusError(sysUpd) })
 	if (!canTransition(current.stage, stage)) {
 		return res.status(409).json({ error: "Недопустимый переход стадии брони" })
 	}
@@ -1871,6 +1908,15 @@ const publicDir = path.join(__dirname, "..", "public")
 const distDir = path.join(__dirname, "..", "dist")
 
 app.use("/api", api)
+
+// Любой неизвестный /api-запрос (не только GET) должен отвечать JSON'ом, иначе фронт
+// получает HTML и показывает бесполезное «Ошибка запроса». Частый случай — сервер
+// запущен из старого кода, а фронтенд уже собран с новыми эндпоинтами.
+app.all("/api/*", (req, res) => {
+	res.status(404).json({
+		error: `Эндпоинт не найден: ${req.method} ${req.originalUrl.split("?")[0]}. Если фронтенд новее сервера — перезапустите сервер (npm start).`,
+	})
+})
 
 app.use("/uploads", express.static(uploadsDir))
 app.use(express.static(publicDir, { index: false }))

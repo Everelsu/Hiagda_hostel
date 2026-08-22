@@ -269,6 +269,39 @@ addColumn("rooms", "plan_h", "INTEGER")
 addColumn("rooms", "plan_cells", "TEXT")
 addColumn("plan_shapes", "cells", "TEXT")
 
+// Статусы бывают двух видов:
+//  booking — назначаются брони вручную (Забронировано, Проживает, свои);
+//  system  — не назначаются никому, это только цвет для производных состояний:
+//            free   — место свободно (брони просто нет),
+//            repair — номер на ремонте (это room_blocks, а не бронь).
+addColumn("statuses", "kind", "TEXT NOT NULL DEFAULT 'booking'")
+addColumn("statuses", "code", "TEXT")
+
+db.prepare("UPDATE statuses SET kind = 'system', code = 'free' WHERE code IS NULL AND name LIKE '%вободн%'").run()
+db.prepare("UPDATE statuses SET kind = 'system', code = 'repair' WHERE code IS NULL AND name LIKE '%емонт%'").run()
+
+// Системные состояния должны существовать всегда — иначе нечем красить план и шахматку
+for (const [code, name, color, sort] of [
+	["free", "Свободно", "#3a3f47", 90],
+	["repair", "Ремонт", "#ff8a5c", 91],
+]) {
+	if (!db.prepare("SELECT id FROM statuses WHERE code = ?").get(code)) {
+		db.prepare("INSERT INTO statuses (name, color, sort, kind, code) VALUES (?,?,?,'system',?)").run(name, color, sort, code)
+	}
+}
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_statuses_code ON statuses(code) WHERE code IS NOT NULL")
+
+// Брони, висящие на системных статусах, переводим на обычный «Проживает»/«Забронировано»
+const bookingFallback = db
+	.prepare("SELECT id FROM statuses WHERE kind = 'booking' ORDER BY sort, id LIMIT 1")
+	.get()
+if (bookingFallback) {
+	db.prepare(
+		`UPDATE placements SET status_id = ?
+		 WHERE status_id IN (SELECT id FROM statuses WHERE kind = 'system')`,
+	).run(bookingFallback.id)
+}
+
 if (!hasColumn("users", "resident_id")) {
 	const migrateUsers = db.transaction(() => {
 		db.exec(`

@@ -43,9 +43,16 @@ const ICON_OPTIONS = [
 const SCOPE = { both: "везде", room: "в номере", hotel: "в доме" }
 const PRESET_COLORS = ["#3a3f47", "#5fc8ff", "#1bd96a", "#ff8a5c", "#ff496e", "#c78aff", "#ffd166"]
 
+const bookingStatuses = computed(() => statuses.value.filter((s) => s.kind !== "system"))
+const systemStatuses = computed(() => statuses.value.filter((s) => s.kind === "system"))
+const SYSTEM_WHY = {
+	free: "место свободно — когда на нём нет брони",
+	repair: "номер на ремонте — ставится в шахматке или в плане этажа, на весь номер",
+}
+
 const tabs = computed(() => [
 	{ value: "classes", label: "Типы номеров", icon: "bed", count: classes.value.length },
-	{ value: "statuses", label: "Статусы брони", icon: "tag", count: statuses.value.length },
+	{ value: "statuses", label: "Статусы брони", icon: "tag", count: bookingStatuses.value.length },
 	{ value: "amenities", label: "Удобства", icon: "armchair", count: amenities.value.length },
 ])
 
@@ -163,7 +170,10 @@ async function addAmenity() {
 
 		<!-- СТАТУСЫ -->
 		<template v-else-if="tab === 'statuses'">
-			<p class="lead">Цвет статуса — это цвет ленты в шахматке. Пункт ТЗ «цветовая индикация + возможность добавлять новые».</p>
+			<p class="lead">
+				Цвет статуса — это цвет ленты в шахматке. Статус брони назначают человеку при заселении.
+				Свободно и Ремонт — производные состояния: их никому не назначают, они только задают цвет.
+			</p>
 
 			<Card v-if="canEdit" pad="md" class="addbar">
 				<Input v-model="newStatus.name" placeholder="Название статуса" style="flex: 1" @keyup.enter="addStatus" />
@@ -182,8 +192,9 @@ async function addAmenity() {
 				<Button variant="primary" icon="plus" @click="addStatus">Добавить</Button>
 			</Card>
 
+			<h4 class="grp">Статусы брони <span class="muted">— назначаются человеку</span></h4>
 			<div class="list">
-				<div v-for="s in statuses" :key="s.id" class="item">
+				<div v-for="s in bookingStatuses" :key="s.id" class="item">
 					<template v-if="editing?.kind === 'status' && editing.id === s.id">
 						<input v-model="editing.color" type="color" class="colorpick" />
 						<Input v-model="editing.name" style="flex: 1" @keyup.enter="saveEdit" />
@@ -196,6 +207,26 @@ async function addAmenity() {
 						<span class="usage" :class="{ zero: !s.used_count }">{{ s.used_count }} брон.</span>
 						<IconButton v-if="canEdit" icon="pencil" label="Изменить" size="sm" @click="startEdit('status', s)" />
 						<IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click="remove('status', s, '/statuses/', 'Статус')" />
+					</template>
+				</div>
+			</div>
+
+			<h4 class="grp">Производные состояния <span class="muted">— только цвет, назначить нельзя</span></h4>
+			<div class="list">
+				<div v-for="s in systemStatuses" :key="s.id" class="item sys">
+					<template v-if="editing?.kind === 'status' && editing.id === s.id">
+						<input v-model="editing.color" type="color" class="colorpick" />
+						<Input v-model="editing.name" style="flex: 1" @keyup.enter="saveEdit" />
+						<Button size="sm" variant="primary" icon="check" @click="saveEdit" />
+						<Button size="sm" variant="ghost" icon="x" @click="editing = null" />
+					</template>
+					<template v-else>
+						<span class="ribbon-demo" :style="{ background: s.color }" />
+						<span class="grow">
+							<span class="item-name">{{ s.name }}</span>
+							<span class="muted sys-why">{{ SYSTEM_WHY[s.code] }}</span>
+						</span>
+						<IconButton v-if="canEdit" icon="pencil" label="Изменить цвет и подпись" size="sm" @click="startEdit('status', s)" />
 					</template>
 				</div>
 			</div>
@@ -309,6 +340,23 @@ async function addAmenity() {
 }
 .usage.zero {
 	opacity: 0.55;
+}
+.grp {
+	margin: var(--gap-md) 0 var(--gap-xs);
+	font-size: var(--font-size-sm);
+	color: var(--color-contrast);
+}
+.grp .muted {
+	font-weight: 400;
+	font-size: var(--font-size-xs);
+}
+.item.sys {
+	background: var(--color-bg);
+	border-style: dashed;
+}
+.sys-why {
+	display: block;
+	font-size: var(--font-size-xs);
 }
 .ribbon-demo {
 	width: 34px;

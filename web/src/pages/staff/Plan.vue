@@ -20,6 +20,7 @@ const rooms = ref([])
 const shapes = ref([])
 const floor = ref(null)
 const editing = ref(false)
+const carving = ref(false)
 const dirty = ref(false)
 const saving = ref(false)
 const selectedId = ref(null)
@@ -93,8 +94,45 @@ const stats = computed(() => {
 /* ---------- редактор ---------- */
 watch(editing, (on) => {
 	selectedId.value = null
+	carving.value = false
 	if (!on) load()
 })
+
+/* Вырезание клеток: даёт углы, впадины и Г-образные комнаты.
+   Маска — строки "111/101" по габариту; нельзя вырезать всё. */
+function maskGrid(mask, w, h) {
+	const rows = typeof mask === "string" && mask ? mask.split("/") : []
+	return Array.from({ length: h }, (_, y) =>
+		Array.from({ length: w }, (_, x) => (rows.length ? rows[y]?.[x] !== "0" : true)),
+	)
+}
+function onCarve({ type, id, cx, cy }) {
+	const item = (type === "room" ? rooms.value : shapes.value).find((i) => i.id === id)
+	if (!item) return
+	const w = type === "room" ? item.plan_w : item.w
+	const h = type === "room" ? item.plan_h : item.h
+	if (cx < 0 || cy < 0 || cx >= w || cy >= h) return
+	const grid = maskGrid(type === "room" ? item.plan_cells : item.cells, w, h)
+	grid[cy][cx] = !grid[cy][cx]
+	if (!grid.flat().some(Boolean)) return toast.error("Нельзя вырезать всё помещение")
+	const flat = grid.map((row) => row.map((v) => (v ? "1" : "0")).join("")).join("/")
+	const value = flat.includes("0") ? flat : null
+	if (type === "room") item.plan_cells = value
+	else item.cells = value
+	dirty.value = true
+}
+function resetShape() {
+	const id = selectedId.value
+	if (typeof id === "number") {
+		const r = rooms.value.find((x) => x.id === id)
+		if (r) (r.plan_cells = null), (dirty.value = true)
+	} else if (selectedShape.value) {
+		selectedShape.value.cells = null
+		dirty.value = true
+	}
+}
+const selectedRoom = computed(() => (typeof selectedId.value === "number" ? placed.value.find((r) => r.id === selectedId.value) : null))
+const carvedSelection = computed(() => !!(selectedRoom.value?.plan_cells || selectedShape.value?.cells))
 
 function onMove({ type, id, x, y, w, h }) {
 	const list = type === "room" ? rooms.value : shapes.value
@@ -137,7 +175,7 @@ function unplaceRoom(room) {
 }
 let tmpId = -1
 function addShape(kind) {
-	shapes.value.push({ id: tmpId--, floor: floor.value, kind, label: null, x: 0, y: 0, w: kind === "corridor" ? 8 : 3, h: 2 })
+	shapes.value.push({ id: tmpId--, floor: floor.value, kind, label: null, x: 0, y: 0, w: kind === "corridor" ? 8 : 3, h: 2, cells: null })
 	dirty.value = true
 }
 function removeShape(s) {
@@ -156,8 +194,15 @@ async function saveLayout() {
 		await put("/plan/layout", {
 			hotel_id: hotelId.value,
 			floor: floor.value,
-			rooms: floorRooms.value.map((r) => ({ id: r.id, plan_x: r.plan_x, plan_y: r.plan_y, plan_w: r.plan_w, plan_h: r.plan_h })),
-			shapes: floorShapes.value.map((s) => ({ kind: s.kind, label: s.label, x: s.x, y: s.y, w: s.w, h: s.h })),
+			rooms: floorRooms.value.map((r) => ({
+				id: r.id,
+				plan_x: r.plan_x,
+				plan_y: r.plan_y,
+				plan_w: r.plan_w,
+				plan_h: r.plan_h,
+				plan_cells: r.plan_cells || null,
+			})),
+			shapes: floorShapes.value.map((s) => ({ kind: s.kind, label: s.label, x: s.x, y: s.y, w: s.w, h: s.h, cells: s.cells || null })),
 		})
 		toast.success("План этажа сохранён")
 		editing.value = false
@@ -260,9 +305,20 @@ function openBed(bed) {
 			<Card v-if="editing" pad="md" class="editor-bar">
 				<div class="ed-row">
 					<span class="ed-title"><Icon name="layout" /> Конструктор плана</span>
-					<span class="muted ed-hint">Тяните блоки мышью, угол — размер. Номера без места — в списке справа.</span>
+					<span class="muted ed-hint">
+						{{ carving
+							? "Кликайте по клеткам помещения: клик убирает клетку, повторный — возвращает. Так делаются углы и впадины."
+							: "Тяните блоки мышью, угол — размер. Номера без места — в списке справа." }}
+					</span>
 				</div>
 				<div class="ed-row">
+					<Button :variant="carving ? 'primary' : undefined" icon="layout" @click="carving = !carving">
+						{{ carving ? "Готово с формой" : "Форма: вырезать клетки" }}
+					</Button>
+					<Button v-if="carvedSelection" variant="ghost" icon="rotate-cw" @click="resetShape">Снова прямоугольник</Button>
+					<span v-if="carving && !selectedId" class="muted ed-hint">Выберите номер или помещение и кликайте по его клеткам.</span>
+				</div>
+				<div v-if="!carving" class="ed-row">
 					<span class="muted ed-label">Добавить помещение:</span>
 					<button v-for="k in SHAPE_KINDS" :key="k.value" type="button" class="addchip" @click="addShape(k.value)">
 						<Icon name="plus" size="0.8rem" /> {{ k.label }}
@@ -281,9 +337,11 @@ function openBed(bed) {
 					:rooms="planRooms"
 					:shapes="floorShapes"
 					:editable="editing"
+					:carving="carving"
 					:selected-id="selectedId"
 					@select="selectedId = $event"
 					@move="onMove"
+					@carve="onCarve"
 					@open="openRoom"
 				/>
 

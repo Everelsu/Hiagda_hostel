@@ -8,7 +8,7 @@
  */
 import { ref, onMounted, onUnmounted, computed, reactive, watch, nextTick } from "vue"
 import { useRoute, useRouter } from "vue-router"
-import { api, post, put } from "@/api/client"
+import { api, post, put, del } from "@/api/client"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
 import PlacementModal from "@/components/PlacementModal.vue"
@@ -83,6 +83,12 @@ const monthSpans = computed(() => {
 	}
 	return out
 })
+
+// Свободно/Ремонт — производные состояния: в легенде и на полосах, но не в брони
+const bookingStatuses = computed(() => statuses.value.filter((s) => s.kind !== "system"))
+const systemStatus = (code) => statuses.value.find((s) => s.code === code)
+const repairColor = computed(() => systemStatus("repair")?.color || "var(--color-orange)")
+const repairName = computed(() => systemStatus("repair")?.name || "Ремонт")
 
 const rooms = computed(() => (classFilter.value ? data.value.rooms.filter((r) => r.class_name === classFilter.value) : data.value.rooms))
 const classOptions = computed(() => [...new Set(data.value.rooms.map((r) => r.class_name).filter(Boolean))])
@@ -258,6 +264,47 @@ const drag = reactive({ id: null, p: null, grabCol: 0, kind: null })
 const ghost = reactive({ active: false, p: null, bedId: null, from: "", to: "", ok: true })
 const menu = reactive({ show: false, p: null, x: 0, y: 0 })
 const selectedId = ref(null)
+// Выбор действия после протяжки по свободным клеткам
+const pick = reactive({ show: false, f: null, from: "", to: "" })
+const repairForm = reactive({ show: false, reason: "" })
+
+function pickBooking() {
+	pick.show = false
+	placement.value = {
+		bed: { id: pick.f.bed.id, label: `${pick.f.room.number} · ${pick.f.bed.label}` },
+		existing: null,
+		date: pick.from,
+		dateTo: addDays(pick.to, 1),
+	}
+}
+function pickRepair() {
+	pick.show = false
+	repairForm.show = true
+	repairForm.reason = ""
+}
+async function submitRepair() {
+	busy.value = true
+	try {
+		await post(`/rooms/${pick.f.room.id}/blocks`, { date_from: pick.from, date_to: pick.to, reason: repairForm.reason || null })
+		repairForm.show = false
+		toast.success(`Номер № ${pick.f.room.number} на ремонте`)
+		await load()
+	} catch (e) {
+		toast.error(e.message)
+	} finally {
+		busy.value = false
+	}
+}
+async function removeBlockAt(bandId) {
+	if (!(await confirm({ title: "Снять ремонт?", danger: true, confirmLabel: "Снять" }))) return
+	try {
+		await del("/blocks/" + bandId)
+		toast.success("Ремонт снят")
+		await load()
+	} catch (e) {
+		toast.error(e.message)
+	}
+}
 
 function locate(clientX, clientY) {
 	const el = scrollEl.value
@@ -389,7 +436,9 @@ async function onUp() {
 		const a = Math.min(sel.a, sel.b)
 		const b = Math.max(sel.a, sel.b)
 		const f = flatBeds.value[sel.row]
-		if (f) placement.value = { bed: { id: f.bed.id, label: `${f.room.number} · ${f.bed.label}` }, existing: null, date: days.value[a], dateTo: addDays(days.value[b], 1) }
+		// Спрашиваем, что делаем с выделенным диапазоном: селим человека или ставим номер на ремонт.
+		// Ремонт — это room_blocks, профиль вахтовика для него не нужен.
+		if (f) Object.assign(pick, { show: true, f, from: days.value[a], to: days.value[b] })
 	} else if (ghost.active && moved) {
 		await commitGhost()
 	} else if (drag.p && !moved) {
@@ -634,9 +683,9 @@ const selStyle = computed(() => {
 		</div>
 
 		<div class="legend">
-			<span v-for="s in statuses" :key="s.id" class="leg"><StatusDot :color="s.color" /> {{ s.name }}</span>
-			<span class="leg"><i class="sw sw-repair" /> ремонт</span>
+			<span v-for="s in bookingStatuses" :key="s.id" class="leg"><StatusDot :color="s.color" /> {{ s.name }}</span>
 			<span class="leg"><i class="sw sw-exp" /> ожидается</span>
+			<span class="leg"><i class="sw sw-repair" :style="{ '--rep': repairColor }" /> {{ repairName }}</span>
 		</div>
 
 		<div ref="scrollEl" class="rack" :class="{ busy }" @pointerdown="onDown" @contextmenu="onContext" @pointerleave="schedulePopHide">
@@ -679,7 +728,16 @@ const selStyle = computed(() => {
 						<div v-for="f in flatBeds" :key="'r' + f.bed.id" class="rowline" :style="{ top: (f.rowIndex + 1) * ROW + 'px' }" />
 						<div v-if="layout.todayX != null" class="todayline" :style="{ left: layout.todayX + 'px' }" />
 
-						<div v-for="b in layout.bands" :key="'b' + b.id" class="band" :style="{ top: b.top + 'px', left: b.leftPx + 'px', width: b.width + 'px', height: b.height + 'px' }" :title="b.reason || 'Ремонт'" />
+						<div
+							v-for="b in layout.bands"
+							:key="'b' + b.id"
+							class="band"
+							:class="{ clickable: canEdit }"
+							:style="{ top: b.top + 'px', left: b.leftPx + 'px', width: b.width + 'px', height: b.height + 'px', '--rep': repairColor }"
+							:title="`Ремонт${b.reason ? ': ' + b.reason : ''}${canEdit ? ' — нажмите, чтобы снять' : ''}`"
+							@pointerdown.stop
+							@click="canEdit && removeBlockAt(b.id)"
+						/>
 
 						<div
 							v-for="r in layout.ribbons"
@@ -736,6 +794,37 @@ const selStyle = computed(() => {
 		</div>
 		<div v-if="menu.show" class="ctx-catch" @pointerdown="menu.show = false" @contextmenu.prevent="menu.show = false" />
 
+		<!-- Что делаем с выделенным диапазоном -->
+		<Modal v-if="pick.show" :title="`№ ${pick.f.room.number} · ${pick.f.bed.label}`" @close="pick.show = false">
+			<p class="pick-dates">{{ pick.from }} – {{ pick.to }}</p>
+			<div class="pick-opts">
+				<button type="button" class="pick-opt" @click="pickBooking">
+					<Icon name="user" size="1.3rem" />
+					<span>
+						<b>Заселить вахтовика</b>
+						<span class="muted">бронь на это место, нужен профиль проживающего</span>
+					</span>
+				</button>
+				<button type="button" class="pick-opt" @click="pickRepair">
+					<Icon name="wrench" size="1.3rem" />
+					<span>
+						<b>Поставить на ремонт</b>
+						<span class="muted">весь номер № {{ pick.f.room.number }}, профиль не нужен</span>
+					</span>
+				</button>
+			</div>
+		</Modal>
+
+		<!-- Ремонт: только период и причина -->
+		<Modal v-if="repairForm.show" :title="`Ремонт номера № ${pick.f.room.number}`" @close="repairForm.show = false">
+			<p class="pick-dates">{{ pick.from }} – {{ pick.to }} · номер будет недоступен для брони</p>
+			<Input v-model="repairForm.reason" placeholder="Причина (необязательно): течёт кран, замена окна…" />
+			<template #foot>
+				<Button variant="ghost" @click="repairForm.show = false">Отмена</Button>
+				<Button variant="primary" icon="wrench" :loading="busy" @click="submitRepair">На ремонт</Button>
+			</template>
+		</Modal>
+
 		<Modal v-if="showHelp" title="Горячие клавиши и жесты" @close="showHelp = false">
 			<div class="keys">
 				<div class="kgroup">
@@ -757,7 +846,8 @@ const selStyle = computed(() => {
 				</div>
 				<div class="kgroup">
 					<h4>Мышь</h4>
-					<div class="krow"><span class="gesture">Протяжка по пустым клеткам</span><span>новая бронь</span></div>
+					<div class="krow"><span class="gesture">Протяжка по пустым клеткам</span><span>бронь или ремонт — на выбор</span></div>
+					<div class="krow"><span class="gesture">Клик по полосе ремонта</span><span>снять ремонт</span></div>
 					<div class="krow"><span class="gesture">Тянуть ленту</span><span>перенос на другое место и даты</span></div>
 					<div class="krow"><span class="gesture">Тянуть за край ленты</span><span>продлить / сократить</span></div>
 					<div class="krow"><span class="gesture">Правый клик</span><span>меню действий</span></div>
@@ -841,8 +931,9 @@ const selStyle = computed(() => {
 	display: inline-block;
 }
 .sw-repair {
-	background: repeating-linear-gradient(45deg, var(--color-orange) 0 3px, transparent 3px 6px);
-	border: 1px solid var(--color-orange);
+	--rep: var(--color-orange);
+	background: repeating-linear-gradient(45deg, var(--rep) 0 3px, transparent 3px 6px);
+	border: 1px solid var(--rep);
 }
 .sw-exp {
 	background: repeating-linear-gradient(45deg, var(--color-brand) 0 3px, transparent 3px 6px);
@@ -1042,10 +1133,54 @@ const selStyle = computed(() => {
 }
 .band {
 	position: absolute;
-	background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--color-orange), transparent 70%) 0 5px, transparent 5px 10px);
-	border: 1px solid var(--color-orange);
+	--rep: var(--color-orange);
+	background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--rep), transparent 70%) 0 5px, transparent 5px 10px);
+	border: 1px solid var(--rep);
 	border-radius: var(--radius-sm);
 	z-index: 1;
+}
+.band.clickable {
+	cursor: pointer;
+}
+.band.clickable:hover {
+	background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--rep), transparent 50%) 0 5px, transparent 5px 10px);
+}
+.pick-dates {
+	margin: 0 0 var(--gap-md);
+	color: var(--color-secondary);
+	font-size: var(--font-size-sm);
+}
+.pick-opts {
+	display: grid;
+	gap: var(--gap-sm);
+}
+.pick-opt {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-md);
+	width: 100%;
+	padding: var(--gap-md);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	color: var(--color-base);
+	background: var(--color-bg);
+	border: 1px solid var(--color-divider);
+	border-radius: var(--radius-md);
+}
+.pick-opt:hover {
+	border-color: var(--color-brand);
+}
+.pick-opt :deep(svg) {
+	color: var(--color-brand);
+	flex-shrink: 0;
+}
+.pick-opt b {
+	display: block;
+	color: var(--color-contrast);
+}
+.pick-opt .muted {
+	font-size: var(--font-size-xs);
 }
 .ribbon {
 	position: absolute;
