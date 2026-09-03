@@ -4,6 +4,7 @@ import { useRouter } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
 import ToastHost from "@/ui/ToastHost.vue"
 import ConfirmHost from "@/ui/ConfirmHost.vue"
+import { connectRealtime, disconnectRealtime } from "@/realtime"
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -16,8 +17,12 @@ onMounted(() => {
 	const theme = localStorage.getItem("noch_theme") || "dark"
 	document.documentElement.setAttribute("data-theme", theme)
 	window.addEventListener("noch:unauthorized", onUnauthorized)
+	if (auth.isAuthed) connectRealtime()
 })
-onUnmounted(() => window.removeEventListener("noch:unauthorized", onUnauthorized))
+onUnmounted(() => {
+	window.removeEventListener("noch:unauthorized", onUnauthorized)
+	disconnectRealtime()
+})
 </script>
 
 <template>

@@ -8,6 +8,7 @@
  */
 import { ref, onMounted, onUnmounted, computed, reactive, watch, nextTick } from "vue"
 import { useRoute, useRouter } from "vue-router"
+import { onRealtime } from "@/realtime"
 import { api, post, put, del } from "@/api/client"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
@@ -235,10 +236,17 @@ onMounted(async () => {
 	window.addEventListener("pointerup", onUp)
 	window.addEventListener("keydown", onKey)
 })
+const stopRealtime = onRealtime((event) => {
+	if (event.type !== "rack:changed" || Number(event.hotelId) !== Number(hotelId.value)) return
+	// Do not replace the grid while the operator is dragging a booking.
+	if (mode.value || busy.value) return
+	load().catch((e) => toast.error(e.message))
+})
 onUnmounted(() => {
 	window.removeEventListener("pointermove", onMove)
 	window.removeEventListener("pointerup", onUp)
 	window.removeEventListener("keydown", onKey)
+	stopRealtime()
 })
 
 function shiftFrom(delta) {

@@ -8,6 +8,13 @@ const ExcelJS = require("exceljs")
 
 const db = require("./db")
 const { sign, authenticate, requireRole, requireStaff } = require("./auth")
+const { createRealtimeServer, STAFF_ROLES } = require("./realtime")
+
+let realtime = null
+const broadcast = (type, payload, canReceive) => realtime?.broadcast(type, payload, canReceive)
+const broadcastToStaff = (type, payload) => realtime?.staff(type, payload)
+const roomHotelId = (roomId) => db.prepare("SELECT hotel_id FROM rooms WHERE id = ?").get(roomId)?.hotel_id
+const bedHotelId = (bedId) => db.prepare("SELECT r.hotel_id FROM beds b JOIN rooms r ON r.id = b.room_id WHERE b.id = ?").get(bedId)?.hotel_id
 
 const STAGES = ["expected", "checked_in", "checked_out", "cancelled"]
 const STAGE_TRANSITIONS = {
@@ -359,6 +366,7 @@ api.post("/me/issues", (req, res) => {
 			VALUES (?, ?, ?, ?, ?, 'Новая', datetime('now', 'localtime'))
 		`).run(room_id, req.user?.id ?? null, amenity_name, comment.trim(), photo || null)
 
+		broadcast("issues:changed", { issueId: Number(info.lastInsertRowid) }, (user) => STAFF_ROLES.has(user.role) || user.id === req.user.id)
 		res.json({ ok: true, id: info.lastInsertRowid })
 	} catch (e) {
 		res.status(500).json({ error: e.message })
@@ -486,6 +494,7 @@ api.post("/issues/:id/comments", (req, res) => {
 	const text = (req.body?.text || "").trim()
 	if (!text) return res.status(400).json({ error: "Введите сообщение" })
 	const info = db.prepare("INSERT INTO issue_comments (issue_id, user_id, text) VALUES (?,?,?)").run(req.params.id, req.user.id, text)
+	broadcast("issue:comment", { issueId: Number(req.params.id) }, (user) => STAFF_ROLES.has(user.role) || user.id === issue.user_id)
 	res.json({ id: info.lastInsertRowid })
 })
 
@@ -569,16 +578,19 @@ api.post("/announcements", requireRole("editor"), (req, res) => {
 	const info = db
 		.prepare("INSERT INTO announcements (hotel_id, title, body, pinned, created_by) VALUES (?,?,?,?,?)")
 		.run(hotel_id || null, title, body, pinned ? 1 : 0, req.user.id)
+	broadcast("announcements:changed", { hotelId: hotel_id || null })
 	res.json({ id: info.lastInsertRowid })
 })
 api.put("/announcements/:id", requireRole("editor"), (req, res) => {
 	const { hotel_id, title, body, pinned } = req.body || {}
 	if (!title || !body) return res.status(400).json({ error: "Заголовок и текст обязательны" })
 	db.prepare("UPDATE announcements SET hotel_id=?, title=?, body=?, pinned=? WHERE id=?").run(hotel_id || null, title, body, pinned ? 1 : 0, req.params.id)
+	broadcast("announcements:changed", { hotelId: hotel_id || null })
 	res.json({ ok: true })
 })
 api.delete("/announcements/:id", requireRole("editor"), (req, res) => {
 	db.prepare("DELETE FROM announcements WHERE id = ?").run(req.params.id)
+	broadcast("announcements:changed", {})
 	res.json({ ok: true })
 })
 
@@ -1500,10 +1512,13 @@ api.post("/rooms/:id/blocks", requireRole("editor"), (req, res) => {
 	const info = db
 		.prepare("INSERT INTO room_blocks (room_id, date_from, date_to, reason) VALUES (?,?,?,?)")
 		.run(req.params.id, date_from, date_to, reason || null)
+	broadcastToStaff("rack:changed", { hotelId: roomHotelId(req.params.id) })
 	res.json({ id: info.lastInsertRowid })
 })
 api.delete("/blocks/:id", requireRole("editor"), (req, res) => {
+	const block = db.prepare("SELECT room_id FROM room_blocks WHERE id = ?").get(req.params.id)
 	db.prepare("DELETE FROM room_blocks WHERE id = ?").run(req.params.id)
+	broadcastToStaff("rack:changed", { hotelId: roomHotelId(block?.room_id) })
 	res.json({ ok: true })
 })
 
@@ -1683,6 +1698,7 @@ api.post("/placements", requireRole("editor"), (req, res) => {
 	const info = db
 		.prepare("INSERT INTO placements (bed_id, resident_id, status_id, stage, date_from, date_to, comment) VALUES (?,?,?,?,?,?,?)")
 		.run(bed_id, resident_id || null, status_id, stage, date_from, date_to, comment || null)
+	broadcastToStaff("rack:changed", { hotelId: bedHotelId(bed_id) })
 	res.json({ id: info.lastInsertRowid })
 })
 api.put("/placements/:id", requireRole("editor"), (req, res) => {
@@ -1727,21 +1743,25 @@ api.put("/placements/:id", requireRole("editor"), (req, res) => {
 		comment || null,
 		req.params.id,
 	)
+	broadcastToStaff("rack:changed", { hotelId: bedHotelId(bedId) })
 	res.json({ ok: true })
 })
 api.post("/placements/:id/stage", requireRole("editor"), (req, res) => {
 	const stage = req.body?.stage
 	if (!STAGES.includes(stage)) return res.status(400).json({ error: "Неизвестная стадия брони" })
-	const current = db.prepare("SELECT stage FROM placements WHERE id = ?").get(req.params.id)
+	const current = db.prepare("SELECT p.stage, b.room_id FROM placements p JOIN beds b ON b.id = p.bed_id WHERE p.id = ?").get(req.params.id)
 	if (!current) return res.status(404).json({ error: "Размещение не найдено" })
 	if (!canTransition(current.stage, stage)) {
 		return res.status(409).json({ error: "Недопустимый переход стадии брони" })
 	}
 	db.prepare("UPDATE placements SET stage = ? WHERE id = ?").run(stage, req.params.id)
+	broadcastToStaff("rack:changed", { hotelId: roomHotelId(current.room_id) })
 	res.json({ ok: true })
 })
 api.delete("/placements/:id", requireRole("editor"), (req, res) => {
+	const placement = db.prepare("SELECT b.room_id FROM placements p JOIN beds b ON b.id = p.bed_id WHERE p.id = ?").get(req.params.id)
 	db.prepare("DELETE FROM placements WHERE id = ?").run(req.params.id)
+	broadcastToStaff("rack:changed", { hotelId: roomHotelId(placement?.room_id) })
 	res.json({ ok: true })
 })
 
@@ -1884,6 +1904,8 @@ api.put("/issues/:id/status", (req, res) => {
 	if (!status) return res.status(400).json({ error: "Укажите status" });
 	try {
 		db.prepare("UPDATE room_issues SET status = ? WHERE id = ?").run(status, req.params.id);
+		const issue = db.prepare("SELECT user_id FROM room_issues WHERE id = ?").get(req.params.id)
+		broadcast("issues:changed", { issueId: Number(req.params.id) }, (user) => STAFF_ROLES.has(user.role) || user.id === issue?.user_id)
 		res.json({ ok: true });
 	} catch (e) {
 		res.status(500).json({ error: e.message });
@@ -1935,5 +1957,6 @@ const server = app.listen(PORT, () => {
 	const addr = server.address()
 	console.log(`NochOtel запущен: http://localhost:${typeof addr === "object" && addr ? addr.port : PORT}`)
 })
+realtime = createRealtimeServer(server)
 
 module.exports = { app, server }

@@ -1,8 +1,9 @@
 <script setup>
-import { ref, onMounted, watch } from "vue"
+import { ref, onMounted, onUnmounted, watch } from "vue"
 import { api, post } from "@/api/client"
 import { toast } from "@/toast"
 import Icon from "@/components/Icon.vue"
+import { onRealtime } from "@/realtime"
 
 const props = defineProps({ issueId: { type: [Number, String], required: true } })
 const comments = ref([])
@@ -18,6 +19,10 @@ async function load() {
 }
 onMounted(load)
 watch(() => props.issueId, load)
+const stopRealtime = onRealtime((event) => {
+	if ((event.type === "issue:comment" || event.type === "issues:changed") && Number(event.issueId) === Number(props.issueId)) load()
+})
+onUnmounted(stopRealtime)
 
 async function send() {
 	if (!text.value.trim()) return

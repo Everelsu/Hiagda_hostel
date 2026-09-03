@@ -1,5 +1,6 @@
 import { defineStore } from "pinia"
 import { post, setToken } from "@/api/client"
+import { connectRealtime, disconnectRealtime } from "@/realtime"
 
 // Персонал: observer (только просмотр) < editor < admin. viewer — вахтовик, не персонал.
 const STAFF_RANK = { observer: 1, editor: 2, admin: 3 }
@@ -25,6 +26,7 @@ export const useAuthStore = defineStore("auth", {
 			setToken(r.token)
 			this.user = r.user
 			localStorage.setItem("noch_user", JSON.stringify(r.user))
+			connectRealtime()
 		},
 		markPasswordChanged() {
 			if (this.user) {
@@ -36,6 +38,7 @@ export const useAuthStore = defineStore("auth", {
 			setToken(null)
 			localStorage.removeItem("noch_user")
 			this.user = null
+			disconnectRealtime()
 		},
 	},
 })
