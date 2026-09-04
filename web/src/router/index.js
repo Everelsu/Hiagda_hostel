@@ -50,6 +50,9 @@ const routes = [
 	{ path: "/:pathMatch(.*)*", redirect: "/" },
 ]
 
+// Разделы, доступные роли «Ремонтная служба»
+const REPAIR_PATHS = ["/app/issues", "/app/plan", "/app/hotels", "/app/map"]
+
 const router = createRouter({ history: createWebHistory(), routes })
 
 router.beforeEach((to) => {
@@ -61,6 +64,10 @@ router.beforeEach((to) => {
 	if (!auth.isAuthed) return { name: "login", query: { next: to.fullPath } }
 	if (to.meta.staff && !auth.isStaff) return auth.homeRoute
 	if (to.meta.user && !auth.isUser) return auth.homeRoute
+	// У ремонтника урезанный портал: бронирование, справочники и профили ему не нужны
+	if (auth.isRepairOnly && to.meta.staff && !REPAIR_PATHS.some((p) => to.path.startsWith(p))) {
+		return auth.homeRoute
+	}
 	if (to.name === "root") return auth.homeRoute
 	return true
 })

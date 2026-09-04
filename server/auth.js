@@ -23,8 +23,13 @@ function resolveSecret() {
 }
 
 const SECRET = resolveSecret()
-// Иерархия прав персонала. observer < editor < admin. viewer (вахтовик) — НЕ персонал.
-const ROLE_RANK = { observer: 1, editor: 2, admin: 3 }
+// Иерархия прав персонала по «лестнице»: observer < editor < admin.
+// maintenance (ремонтник) в лестницу не встраивается: он НЕ ведёт брони и номерной фонд,
+// но обслуживает заявки и ремонт. Поэтому ранг у него как у наблюдателя (только чтение
+// по лестнице), а право писать заявки и ремонт даёт отдельная проверка requireRepair.
+// viewer (вахтовик) — не персонал, ранга нет вовсе.
+const ROLE_RANK = { observer: 1, maintenance: 1, editor: 2, admin: 3 }
+const REPAIR_ROLES = new Set(["maintenance", "editor", "admin"])
 
 function sign(user) {
 	return jwt.sign(
@@ -62,4 +67,14 @@ function requireStaff(req, res, next) {
 	next()
 }
 
-module.exports = { sign, authenticate, requireRole, requireStaff, SECRET }
+// Обслуживание заявок и ремонта: ремонтник, редактор, администратор
+function requireRepair(req, res, next) {
+	if (!req.user || !REPAIR_ROLES.has(req.user.role)) {
+		return res.status(403).json({ error: "Доступ только для ремонтной службы" })
+	}
+	next()
+}
+
+const canRepair = (user) => !!user && REPAIR_ROLES.has(user.role)
+
+module.exports = { sign, authenticate, requireRole, requireStaff, requireRepair, canRepair, SECRET }

@@ -14,9 +14,15 @@ const counters = useCounters()
 
 const theme = ref(document.documentElement.getAttribute("data-theme") || "dark")
 const mobileOpen = ref(false)
-const ROLE_LABEL = { admin: "Администратор", editor: "Редактор", observer: "Просмотр", viewer: "Вахтовик" }
+const ROLE_LABEL = { admin: "Администратор", editor: "Редактор", observer: "Просмотр", maintenance: "Ремонтная служба", viewer: "Вахтовик" }
 
-const groups = computed(() => STAFF_NAV.filter((g) => !g.admin || auth.can("admin")))
+// Ремонтнику показываем только его разделы, остальным — всё, кроме админских
+const groups = computed(() =>
+	STAFF_NAV
+		.filter((g) => !g.admin || auth.can("admin"))
+		.map((g) => ({ ...g, items: auth.isRepairOnly ? g.items.filter((i) => i.repair) : g.items }))
+		.filter((g) => g.items.length),
+)
 const pageTitle = computed(() => {
 	for (const g of STAFF_NAV) for (const i of g.items) if (route.path.startsWith(i.to)) return i.label
 	return "NochOtel"

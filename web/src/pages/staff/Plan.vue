@@ -12,6 +12,7 @@ import { PageHeader, Card, Select, Input, Button, IconButton, Drawer, Chip, Stat
 const auth = useAuthStore()
 const counters = useCounters()
 const canEdit = auth.can("editor")
+const canRepair = auth.canRepair // ремонтник тоже ставит и снимает ремонт
 
 const hotels = ref([])
 const hotelId = ref(null)
@@ -218,7 +219,7 @@ async function openRoom(r) {
 	if (editing.value) return
 	roomDetail.value = r
 	blockForm.value = { date_from: date.value, date_to: date.value, reason: "" }
-	blocks.value = canEdit ? await api(`/rooms/${r.id}/blocks`) : []
+	blocks.value = canRepair ? await api(`/rooms/${r.id}/blocks`) : []
 	try {
 		roomIssues.value = await api(`/rooms/${r.id}/issues`)
 	} catch {
@@ -412,7 +413,7 @@ function openBed(bed) {
 				</div>
 			</div>
 
-			<template v-if="canEdit">
+			<template v-if="canRepair">
 				<div class="section-title" style="margin-top: var(--gap-md)">Ремонт</div>
 				<div v-for="b in blocks" :key="b.id" class="bedrow">
 					<Icon name="wrench" style="color: var(--color-orange)" />

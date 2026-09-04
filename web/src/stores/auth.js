@@ -3,7 +3,10 @@ import { post, setToken } from "@/api/client"
 import { connectRealtime, disconnectRealtime } from "@/realtime"
 
 // Персонал: observer (только просмотр) < editor < admin. viewer — вахтовик, не персонал.
-const STAFF_RANK = { observer: 1, editor: 2, admin: 3 }
+// maintenance (ремонтник) — сотрудник вне лестницы: по правке номерного фонда и броней
+// он на уровне наблюдателя, но обслуживает заявки и ремонт (см. canRepair).
+const STAFF_RANK = { observer: 1, maintenance: 1, editor: 2, admin: 3 }
+const REPAIR_ROLES = ["maintenance", "editor", "admin"]
 
 export const useAuthStore = defineStore("auth", {
 	state: () => ({
@@ -13,8 +16,15 @@ export const useAuthStore = defineStore("auth", {
 		isAuthed: (s) => !!s.user,
 		isStaff: (s) => !!STAFF_RANK[s.user?.role],
 		isUser: (s) => s.user?.role === "viewer",
+		// Ремонтник: обслуживает заявки и ставит номера на ремонт
+		canRepair: (s) => REPAIR_ROLES.includes(s.user?.role),
+		isRepairOnly: (s) => s.user?.role === "maintenance",
 		can: (s) => (role) => (STAFF_RANK[s.user?.role] || 0) >= STAFF_RANK[role],
-		homeRoute: (s) => (s.user?.role === "viewer" ? "/me" : STAFF_RANK[s.user?.role] ? "/app" : "/login"),
+		homeRoute: (s) =>
+			s.user?.role === "viewer" ? "/me"
+			: s.user?.role === "maintenance" ? "/app/issues"
+			: STAFF_RANK[s.user?.role] ? "/app"
+			: "/login",
 	},
 	actions: {
 		async login(username, password) {

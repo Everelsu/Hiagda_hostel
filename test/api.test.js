@@ -305,6 +305,109 @@ test("системные состояния нельзя назначить бр
 	assert.equal(list.json.find((s) => s.id === custom.json.id).kind, "booking")
 })
 
+test("вместимость номера уменьшается вместе с местами", async () => {
+	const hotels = await call("GET", "/hotels", { token: adminToken })
+	const created = await call("POST", "/rooms", {
+		token: adminToken,
+		body: { hotel_id: hotels.json[0].id, number: "CAP-1", capacity: 4 },
+	})
+	const roomId = created.json.id
+	const beds = async () => {
+		const list = await call("GET", `/rooms?hotel_id=${hotels.json[0].id}`, { token: adminToken })
+		return list.json.find((r) => r.id === roomId).beds.length
+	}
+	assert.equal(await beds(), 4, "при создании появились 4 места")
+
+	assert.equal((await call("PUT", `/rooms/${roomId}`, { token: adminToken, body: { number: "CAP-1", capacity: 2 } })).status, 200)
+	assert.equal(await beds(), 2, "лишние места удалены")
+
+	assert.equal((await call("PUT", `/rooms/${roomId}`, { token: adminToken, body: { number: "CAP-1", capacity: 5 } })).status, 200)
+	assert.equal(await beds(), 5, "места снова добавились")
+})
+
+test("занятое место не даёт уменьшить вместимость", async () => {
+	const hotels = await call("GET", "/hotels", { token: adminToken })
+	const created = await call("POST", "/rooms", {
+		token: adminToken,
+		body: { hotel_id: hotels.json[0].id, number: "CAP-2", capacity: 2 },
+	})
+	const list = await call("GET", `/rooms?hotel_id=${hotels.json[0].id}`, { token: adminToken })
+	const room = list.json.find((r) => r.id === created.json.id)
+	const lastBed = room.beds[room.beds.length - 1]
+
+	await call("POST", "/placements", {
+		token: adminToken,
+		body: { bed_id: lastBed.id, resident_id: residentId, status_id: statusId, date_from: "2029-03-01", date_to: "2029-03-10" },
+	})
+	const res = await call("PUT", `/rooms/${created.json.id}`, { token: adminToken, body: { number: "CAP-2", capacity: 1 } })
+	assert.equal(res.status, 409, "уменьшение отклонено — на месте есть бронь")
+	assert.match(res.json.error, /брони/)
+})
+
+test("роль «Ремонтная служба»: заявки и ремонт да, брони нет", async () => {
+	const made = await call("POST", "/users", {
+		token: adminToken,
+		body: { username: "repair1", password: "repair123", full_name: "Ремонтник", role: "maintenance" },
+	})
+	assert.equal(made.status, 200)
+	const login = await call("POST", "/login", { body: { username: "repair1", password: "repair123" } })
+	const t = login.json.token
+
+	const hotels = await call("GET", "/hotels", { token: adminToken })
+	const rooms = await call("GET", `/rooms?hotel_id=${hotels.json[0].id}`, { token: adminToken })
+	const roomId = rooms.json[0].id
+
+	// может: читать и обслуживать ремонт
+	assert.equal((await call("GET", "/issues", { token: t })).status, 200)
+	assert.equal((await call("GET", "/issues/count", { token: t })).status, 200)
+	const block = await call("POST", `/rooms/${roomId}/blocks`, {
+		token: t,
+		body: { date_from: "2029-05-01", date_to: "2029-05-05", reason: "проверка" },
+	})
+	assert.equal(block.status, 200, "ремонтник ставит номер на ремонт")
+	assert.equal((await call("DELETE", `/blocks/${block.json.id}`, { token: t })).status, 200, "и снимает его")
+
+	// не может: брони, номерной фонд, план, администрирование
+	const booking = await call("POST", "/placements", {
+		token: t,
+		body: { bed_id: bedId, resident_id: residentId, status_id: statusId, date_from: "2029-06-01", date_to: "2029-06-05" },
+	})
+	assert.equal(booking.status, 403, "бронировать не вправе")
+	assert.equal((await call("POST", "/rooms", { token: t, body: { hotel_id: hotels.json[0].id, number: "X" } })).status, 403)
+	assert.equal((await call("PUT", "/plan/layout", { token: t, body: { hotel_id: hotels.json[0].id, floor: 1, rooms: [], shapes: [] } })).status, 403)
+	assert.equal((await call("GET", "/users", { token: t })).status, 403)
+	assert.equal((await call("GET", "/audit", { token: t })).status, 403)
+})
+
+test("наблюдатель не трогает заявки и ремонт", async () => {
+	const login = await call("POST", "/login", { body: { username: "watch1", password: "watch123" } })
+	const t = login.json.token
+	const hotels = await call("GET", "/hotels", { token: adminToken })
+	const rooms = await call("GET", `/rooms?hotel_id=${hotels.json[0].id}`, { token: adminToken })
+	assert.equal((await call("POST", `/rooms/${rooms.json[0].id}/blocks`, { token: t, body: { date_from: "2029-07-01", date_to: "2029-07-02" } })).status, 403)
+	assert.equal((await call("PUT", "/issues/1/status", { token: t, body: { status: "Починено" } })).status, 403)
+})
+
+test("частичное изменение гостиницы не обнуляет остальные поля", async () => {
+	const created = await call("POST", "/hotels", {
+		token: adminToken,
+		body: { name: "Дом для теста", settlement: "п. Тестовый", phone: "+7 000", check_out: "12:00" },
+	})
+	const id = created.json.id
+	assert.equal((await call("PUT", `/hotels/${id}`, { token: adminToken, body: { phone: "+7 111" } })).status, 200)
+
+	const after = await call("GET", `/hotels/${id}`, { token: adminToken })
+	assert.equal(after.json.phone, "+7 111", "переданное поле изменилось")
+	assert.equal(after.json.settlement, "п. Тестовый", "непереданное поле сохранилось")
+	assert.equal(after.json.check_out, "12:00", "и это тоже")
+})
+
+test("неверный статус заявки — понятная ошибка, а не 500", async () => {
+	const res = await call("PUT", "/issues/1/status", { token: adminToken, body: { status: "Чинится" } })
+	assert.equal(res.status, 400)
+	assert.match(res.json.error, /Недопустимый статус/)
+})
+
 test("слишком короткий пароль отклоняется", async () => {
 	const weak = await call("POST", "/users", {
 		token: adminToken,

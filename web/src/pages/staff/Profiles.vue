@@ -155,8 +155,8 @@ function printCreds() {
 const staff = ref([])
 const loadingS = ref(false)
 const staffDrawer = ref(null)
-const ROLE_LABEL = { admin: "Администратор", editor: "Редактор", observer: "Просмотр" }
-const ROLE_COLOR = { admin: "var(--color-brand)", editor: "var(--color-blue)", observer: "var(--color-gray)" }
+const ROLE_LABEL = { admin: "Администратор", editor: "Редактор", observer: "Просмотр", maintenance: "Ремонтная служба" }
+const ROLE_COLOR = { admin: "var(--color-brand)", editor: "var(--color-blue)", observer: "var(--color-gray)", maintenance: "var(--color-orange)" }
 const staffColumns = [
 	{ key: "full_name", label: "Сотрудник", sortable: true },
 	{ key: "role", label: "Роль", sortable: true },
@@ -327,7 +327,12 @@ function fmt(d) {
 			<Field v-if="!staffDrawer.id" label="Логин"><Input v-model="staffDrawer.username" /></Field>
 			<Field label="ФИО"><Input v-model="staffDrawer.full_name" /></Field>
 			<Field label="Роль">
-				<Select v-model="staffDrawer.role"><option value="observer">Просмотр (только чтение)</option><option value="editor">Редактор</option><option value="admin">Администратор</option></Select>
+				<Select v-model="staffDrawer.role">
+						<option value="observer">Просмотр — только чтение</option>
+						<option value="maintenance">Ремонтная служба — заявки и ремонт номеров</option>
+						<option value="editor">Редактор — номерной фонд и брони</option>
+						<option value="admin">Администратор — полный доступ</option>
+					</Select>
 			</Field>
 			<Field :label="staffDrawer.id ? 'Новый пароль (оставьте пустым, чтобы не менять)' : 'Пароль'" hint="Минимум 6 символов"><Input v-model="staffDrawer.password" /></Field>
 			<template #foot>

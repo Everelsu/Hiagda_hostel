@@ -17,7 +17,7 @@ db.exec(`
 		username      TEXT NOT NULL UNIQUE,
 		password_hash TEXT NOT NULL,
 		full_name     TEXT,
-		role          TEXT NOT NULL CHECK (role IN ('admin','editor','observer','viewer','resident')),
+		role          TEXT NOT NULL CHECK (role IN ('admin','editor','observer','maintenance','viewer','resident')),
 		resident_id   INTEGER REFERENCES residents(id) ON DELETE SET NULL,
 		created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 	);
@@ -334,10 +334,10 @@ try {
 // Роль 'resident' переименована в 'viewer' (конечный пользователь, портал /me)
 db.prepare("UPDATE users SET role = 'viewer' WHERE role = 'resident'").run()
 
-// Роль 'observer' — read-only сотрудник (портал /app без права правки). Для существующих
+// Роли 'observer' (read-only сотрудник) и 'maintenance' (ремонтник). Для существующих
 // БД расширяем CHECK через пересоздание таблицы (SQLite не умеет ALTER CHECK).
 const usersDDL = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get()?.sql || ""
-if (!usersDDL.includes("'observer'")) {
+if (!usersDDL.includes("'maintenance'")) {
 	const colList = columns("users").map((c) => c.name).join(", ")
 	const rebuild = db.transaction(() => {
 		db.exec(`
@@ -346,7 +346,7 @@ if (!usersDDL.includes("'observer'")) {
 				username      TEXT NOT NULL UNIQUE,
 				password_hash TEXT NOT NULL,
 				full_name     TEXT,
-				role          TEXT NOT NULL CHECK (role IN ('admin','editor','observer','viewer','resident')),
+				role          TEXT NOT NULL CHECK (role IN ('admin','editor','observer','maintenance','viewer','resident')),
 				resident_id   INTEGER REFERENCES residents(id) ON DELETE SET NULL,
 				created_at    TEXT NOT NULL DEFAULT (datetime('now')),
 				must_change_password INTEGER NOT NULL DEFAULT 0,

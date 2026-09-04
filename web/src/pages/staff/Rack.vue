@@ -29,6 +29,7 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const canEdit = auth.can("editor")
+const canRepair = auth.canRepair // ремонтник ставит и снимает ремонт, но не бронирует
 
 const hotels = ref([])
 const statuses = ref([])
@@ -365,7 +366,7 @@ function onDown(e) {
 		e.preventDefault()
 		return
 	}
-	if (canEdit && !loc.blocked) {
+	if ((canEdit || canRepair) && !loc.blocked) {
 		mode.value = "select"
 		Object.assign(sel, { active: true, bedId: loc.f.bed.id, row: loc.row, a: loc.col, b: loc.col })
 		e.preventDefault()
@@ -740,11 +741,11 @@ const selStyle = computed(() => {
 							v-for="b in layout.bands"
 							:key="'b' + b.id"
 							class="band"
-							:class="{ clickable: canEdit }"
+							:class="{ clickable: canRepair }"
 							:style="{ top: b.top + 'px', left: b.leftPx + 'px', width: b.width + 'px', height: b.height + 'px', '--rep': repairColor }"
-							:title="`Ремонт${b.reason ? ': ' + b.reason : ''}${canEdit ? ' — нажмите, чтобы снять' : ''}`"
+							:title="`Ремонт${b.reason ? ': ' + b.reason : ''}${canRepair ? ' — нажмите, чтобы снять' : ''}`"
 							@pointerdown.stop
-							@click="canEdit && removeBlockAt(b.id)"
+							@click="canRepair && removeBlockAt(b.id)"
 						/>
 
 						<div
@@ -806,14 +807,14 @@ const selStyle = computed(() => {
 		<Modal v-if="pick.show" :title="`№ ${pick.f.room.number} · ${pick.f.bed.label}`" @close="pick.show = false">
 			<p class="pick-dates">{{ pick.from }} – {{ pick.to }}</p>
 			<div class="pick-opts">
-				<button type="button" class="pick-opt" @click="pickBooking">
+				<button v-if="canEdit" type="button" class="pick-opt" @click="pickBooking">
 					<Icon name="user" size="1.3rem" />
 					<span>
 						<b>Заселить вахтовика</b>
 						<span class="muted">бронь на это место, нужен профиль проживающего</span>
 					</span>
 				</button>
-				<button type="button" class="pick-opt" @click="pickRepair">
+				<button v-if="canRepair" type="button" class="pick-opt" @click="pickRepair">
 					<Icon name="wrench" size="1.3rem" />
 					<span>
 						<b>Поставить на ремонт</b>

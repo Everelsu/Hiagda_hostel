@@ -7,7 +7,7 @@ const multer = require("multer")
 const ExcelJS = require("exceljs")
 
 const db = require("./db")
-const { sign, authenticate, requireRole, requireStaff } = require("./auth")
+const { sign, authenticate, requireRole, requireStaff, requireRepair, canRepair } = require("./auth")
 const { createRealtimeServer, STAFF_ROLES } = require("./realtime")
 
 let realtime = null
@@ -27,6 +27,7 @@ const canTransition = (from, to) => from === to || STAGE_TRANSITIONS[from]?.incl
 const STAGE_LABELS = { expected: "Ожидается", checked_in: "Проживает", checked_out: "Выехал", cancelled: "Отменён" }
 const stageLabel = (stage) => STAGE_LABELS[stage] || STAGE_LABELS.expected
 const publicUser = (u) => ({ id: u.id, username: u.username, full_name: u.full_name, role: u.role, resident_id: u.resident_id ?? null, must_change_password: !!u.must_change_password })
+const ISSUE_STATUSES = ["Новая", "В работе", "Починено"]
 const MIN_PASSWORD = 6
 // Системные статусы (Свободно / Ремонт) — это производные состояния, а не бронь.
 // «Свободно» = брони нет, «Ремонт» = room_blocks. Назначать их человеку нельзя.
@@ -339,14 +340,13 @@ api.put("/me/profile", (req, res) => {
 	res.json({ ok: true })
 })
 
+// Счётчик СВОИХ незакрытых заявок — для вахтовика
 api.get("/me/issues/count", (req, res) => {
-	try {
-		const row = db.prepare("SELECT COUNT(*) as count FROM room_issues WHERE status = 'Новая'").get();
-		res.json({ count: row ? row.count : 0 });
-	} catch (e) {
-		res.status(500).json({ error: e.message });
-	}
-});
+	const row = db
+		.prepare("SELECT COUNT(*) AS count FROM room_issues WHERE user_id = ? AND status <> 'Починено'")
+		.get(req.user.id)
+	res.json({ count: row?.count || 0 })
+})
 
 api.post("/me/issues", (req, res) => {
 	const { room_id, amenity_name, comment, photo } = req.body || {}
@@ -369,7 +369,8 @@ api.post("/me/issues", (req, res) => {
 		broadcast("issues:changed", { issueId: Number(info.lastInsertRowid) }, (user) => STAFF_ROLES.has(user.role) || user.id === req.user.id)
 		res.json({ ok: true, id: info.lastInsertRowid })
 	} catch (e) {
-		res.status(500).json({ error: e.message })
+		console.error("POST /me/issues:", e.message)
+		res.status(500).json({ error: "Не удалось сохранить заявку" })
 	}
 })
 
@@ -379,7 +380,7 @@ api.post("/upload", uploadImage.single("file"), (req, res) => {
 	res.json({ url: `/uploads/${req.file.filename}` })
 })
 
-const isStaffUser = (u) => u?.role === "admin" || u?.role === "editor"
+const isStaffUser = (u) => u?.role === "admin" || u?.role === "editor" || u?.role === "maintenance"
 const canViewAllIssues = (u) => isStaffUser(u) || u?.role === "observer"
 
 function announcementsFor(hotelId) {
@@ -949,7 +950,8 @@ api.get("/plan", (req, res) => {
 
 		res.json({ date, rooms, shapes })
 	} catch (e) {
-		res.status(500).json({ error: e.message })
+		console.error("GET /plan:", e.message)
+		res.status(500).json({ error: "Не удалось загрузить план этажа" })
 	}
 })
 
@@ -1018,7 +1020,7 @@ api.put("/plan/layout", requireRole("editor"), (req, res) => {
 	res.json({ ok: true })
 })
 
-const ROLES = ["admin", "editor", "observer", "viewer"]
+const ROLES = ["admin", "editor", "observer", "maintenance", "viewer"]
 api.get("/users", requireRole("admin"), (_req, res) => {
 	res.json(
 		db
@@ -1165,8 +1167,12 @@ api.post("/hotels", requireRole("editor"), (req, res) => {
 })
 api.put("/hotels/:id", requireRole("editor"), (req, res) => {
 	const b = req.body || {}
-	const set = HOTEL_FIELDS.map((f) => `${f}=?`).join(", ")
-	db.prepare(`UPDATE hotels SET ${set} WHERE id=?`).run(...HOTEL_FIELDS.map((f) => b[f] || null), req.params.id)
+	// Обновляем только переданные поля: иначе частичный запрос обнулял бы всё остальное
+	const fields = HOTEL_FIELDS.filter((f) => f in b)
+	if (!fields.length) return res.status(400).json({ error: "Нет полей для изменения" })
+	if ("name" in b && !String(b.name || "").trim()) return res.status(400).json({ error: "Укажите название" })
+	const set = fields.map((f) => `${f}=?`).join(", ")
+	db.prepare(`UPDATE hotels SET ${set} WHERE id=?`).run(...fields.map((f) => b[f] || null), req.params.id)
 	res.json({ ok: true })
 })
 api.delete("/hotels/:id", requireRole("admin"), (req, res) => {
@@ -1419,6 +1425,21 @@ api.post("/rooms", requireRole("editor"), (req, res) => {
 api.put("/rooms/:id", requireRole("editor"), (req, res) => {
 	const { class_id, number, floor, capacity, description } = req.body || {}
 	const cap = Math.max(1, parseInt(capacity, 10) || 1)
+	const beds = db.prepare("SELECT * FROM beds WHERE room_id = ? ORDER BY id").all(req.params.id)
+
+	// Уменьшение вместимости: лишние места убираем с конца, но только пустые.
+	// Если на них есть непогашенные брони — операцию отклоняем, иначе бронь исчезла бы молча.
+	const extra = beds.length > cap ? beds.slice(cap) : []
+	if (extra.length) {
+		const cnt = db.prepare("SELECT COUNT(*) c FROM placements WHERE bed_id = ? AND stage <> 'cancelled'")
+		const busy = extra.filter((b) => cnt.get(b.id).c > 0)
+		if (busy.length) {
+			return res.status(409).json({
+				error: `Нельзя уменьшить вместимость: на местах «${busy.map((b) => b.label).join("», «")}» есть брони. Сначала отмените или перенесите их.`,
+			})
+		}
+	}
+
 	const tx = db.transaction(() => {
 		db.prepare("UPDATE rooms SET class_id=?, number=?, floor=?, capacity=?, description=? WHERE id=?").run(
 			class_id || null,
@@ -1428,10 +1449,12 @@ api.put("/rooms/:id", requireRole("editor"), (req, res) => {
 			description || null,
 			req.params.id,
 		)
-		const beds = db.prepare("SELECT * FROM beds WHERE room_id = ? ORDER BY id").all(req.params.id)
 		if (beds.length < cap) {
 			const ins = db.prepare("INSERT INTO beds (room_id, label) VALUES (?,?)")
 			for (let i = beds.length + 1; i <= cap; i++) ins.run(req.params.id, `Место ${i}`)
+		} else if (extra.length) {
+			const del = db.prepare("DELETE FROM beds WHERE id = ?")
+			for (const b of extra) del.run(b.id)
 		}
 	})
 	tx()
@@ -1439,8 +1462,22 @@ api.put("/rooms/:id", requireRole("editor"), (req, res) => {
 })
 
 api.delete("/rooms/:id", requireRole("editor"), (req, res) => {
-	db.prepare("DELETE FROM images WHERE owner_type = 'room' AND owner_id = ?").run(Number(req.params.id))
-	db.prepare("DELETE FROM rooms WHERE id = ?").run(req.params.id)
+	const id = Number(req.params.id)
+	// Удаление каскадом сносит места и брони. Текущие и будущие брони так терять нельзя.
+	const today = new Date().toISOString().slice(0, 10)
+	const active = db
+		.prepare(
+			`SELECT COUNT(*) c FROM placements p JOIN beds b ON b.id = p.bed_id
+			 WHERE b.room_id = ? AND p.stage <> 'cancelled' AND p.date_to >= ?`,
+		)
+		.get(id, today).c
+	if (active) {
+		return res.status(409).json({
+			error: `В номере есть действующие или будущие брони (${active}). Отмените их либо поставьте номер на ремонт вместо удаления.`,
+		})
+	}
+	db.prepare("DELETE FROM images WHERE owner_type = 'room' AND owner_id = ?").run(id)
+	db.prepare("DELETE FROM rooms WHERE id = ?").run(id)
 	res.json({ ok: true })
 })
 
@@ -1505,7 +1542,7 @@ api.get("/availability", (req, res) => {
 api.get("/rooms/:id/blocks", (req, res) =>
 	res.json(db.prepare("SELECT * FROM room_blocks WHERE room_id = ? ORDER BY date_from DESC").all(req.params.id)),
 )
-api.post("/rooms/:id/blocks", requireRole("editor"), (req, res) => {
+api.post("/rooms/:id/blocks", requireRepair, (req, res) => {
 	const { date_from, date_to, reason } = req.body || {}
 	if (!date_from || !date_to) return res.status(400).json({ error: "Укажите период ремонта" })
 	if (date_to < date_from) return res.status(400).json({ error: "Дата окончания раньше начала" })
@@ -1515,7 +1552,7 @@ api.post("/rooms/:id/blocks", requireRole("editor"), (req, res) => {
 	broadcastToStaff("rack:changed", { hotelId: roomHotelId(req.params.id) })
 	res.json({ id: info.lastInsertRowid })
 })
-api.delete("/blocks/:id", requireRole("editor"), (req, res) => {
+api.delete("/blocks/:id", requireRepair, (req, res) => {
 	const block = db.prepare("SELECT room_id FROM room_blocks WHERE id = ?").get(req.params.id)
 	db.prepare("DELETE FROM room_blocks WHERE id = ?").run(req.params.id)
 	broadcastToStaff("rack:changed", { hotelId: roomHotelId(block?.room_id) })
@@ -1893,23 +1930,29 @@ api.get("/rooms/:id/issues", (req, res) => {
 			WHERE ri.room_id = ?
 			ORDER BY ri.id DESC
 		`).all(req.params.id);
-		res.json(issues);
+		res.json(issues)
 	} catch (e) {
-		res.status(500).json({ error: e.message });
+		console.error("GET /rooms/:id/issues:", e.message)
+		res.status(500).json({ error: "Не удалось загрузить заявки по номеру" })
 	}
 });
 
-api.put("/issues/:id/status", (req, res) => {
-	const { status } = req.body || {};
-	if (!status) return res.status(400).json({ error: "Укажите status" });
-	try {
-		db.prepare("UPDATE room_issues SET status = ? WHERE id = ?").run(status, req.params.id);
-		const issue = db.prepare("SELECT user_id FROM room_issues WHERE id = ?").get(req.params.id)
-		broadcast("issues:changed", { issueId: Number(req.params.id) }, (user) => STAFF_ROLES.has(user.role) || user.id === issue?.user_id)
-		res.json({ ok: true });
-	} catch (e) {
-		res.status(500).json({ error: e.message });
+// Счётчик новых заявок по всем домам — для бейджа в меню персонала
+api.get("/issues/count", (_req, res) => {
+	const row = db.prepare("SELECT COUNT(*) AS count FROM room_issues WHERE status = 'Новая'").get()
+	res.json({ count: row?.count || 0 })
+})
+
+api.put("/issues/:id/status", requireRepair, (req, res) => {
+	const { status } = req.body || {}
+	if (!ISSUE_STATUSES.includes(status)) {
+		return res.status(400).json({ error: `Недопустимый статус заявки. Допустимые: ${ISSUE_STATUSES.join(", ")}` })
 	}
+	const issue = db.prepare("SELECT user_id FROM room_issues WHERE id = ?").get(req.params.id)
+	if (!issue) return res.status(404).json({ error: "Заявка не найдена" })
+	db.prepare("UPDATE room_issues SET status = ? WHERE id = ?").run(status, req.params.id)
+	broadcast("issues:changed", { issueId: Number(req.params.id) }, (user) => STAFF_ROLES.has(user.role) || user.id === issue?.user_id)
+	res.json({ ok: true })
 });
 
 async function sendXlsx(res, data, name, header) {

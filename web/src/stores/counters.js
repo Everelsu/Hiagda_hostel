@@ -6,7 +6,7 @@ export const useCounters = defineStore("counters", {
 	actions: {
 		async refresh() {
 			try {
-				this.newIssues = (await api("/me/issues/count")).count || 0
+				this.newIssues = (await api("/issues/count")).count || 0
 			} catch {}
 		},
 	},
