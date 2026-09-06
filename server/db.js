@@ -280,7 +280,7 @@ addColumn("statuses", "code", "TEXT")
 db.prepare("UPDATE statuses SET kind = 'system', code = 'free' WHERE code IS NULL AND name LIKE '%вободн%'").run()
 db.prepare("UPDATE statuses SET kind = 'system', code = 'repair' WHERE code IS NULL AND name LIKE '%емонт%'").run()
 
-// Системные состояния должны существовать всегда — иначе нечем красить план и шахматку
+// Системные состояния должны существовать всегда — иначе нечем красить план и календарь броней
 for (const [code, name, color, sort] of [
 	["free", "Свободно", "#3a3f47", 90],
 	["repair", "Ремонт", "#ff8a5c", 91],

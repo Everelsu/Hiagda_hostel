@@ -1,6 +1,7 @@
 <script setup>
-import { ref, onMounted } from "vue"
+import { ref, computed, onMounted } from "vue"
 import { api } from "@/api/client"
+import { today, addDays, nightsBetween, nightsWord, dm } from "@/utils/date"
 import { useAuthStore } from "@/stores/auth"
 import PlacementModal from "@/components/PlacementModal.vue"
 import Icon from "@/components/Icon.vue"
@@ -12,11 +13,14 @@ const hotels = ref([])
 const classes = ref([])
 const hotelId = ref("")
 const classId = ref("")
-const from = ref(new Date().toISOString().slice(0, 10))
-const to = ref(new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10))
+const from = ref(today())
+const to = ref(addDays(today(), 7))
 const result = ref(null)
 const loading = ref(false)
 const placement = ref(null)
+
+// Период считаем ночами: с 5-го по 7-е — это две ночи, 7-го место уже свободно.
+const nightsCount = computed(() => Math.max(0, nightsBetween(from.value, to.value)))
 
 onMounted(async () => {
 	;[hotels.value, classes.value] = await Promise.all([api("/hotels"), api("/classes")])
@@ -35,7 +39,7 @@ async function search() {
 	}
 }
 function place(room, bed) {
-	placement.value = { bed: { id: bed.bed_id, label: `№ ${room.number} · ${bed.bed_label}` } }
+	placement.value = { bed: { id: bed.bed_id, label: `Номер № ${room.number} · ${bed.bed_label}` } }
 }
 function onSaved() {
 	placement.value = null
@@ -45,15 +49,21 @@ function onSaved() {
 
 <template>
 	<div class="grid">
-		<PageHeader title="Свободные места" subtitle="Кто свободен на выбранный период — для заселения вахты" icon="search" />
+		<PageHeader title="Свободные места" subtitle="Какие места свободны все ночи выбранного периода — чтобы сразу заселить вахту" icon="search" />
 
 		<FilterBar>
-			<Field label="С"><Input v-model="from" type="date" @change="search" /></Field>
-			<Field label="По"><Input v-model="to" type="date" @change="search" /></Field>
+			<Field label="Заезд"><Input v-model="from" type="date" @change="search" /></Field>
+			<Field label="Выезд"><Input v-model="to" type="date" @change="search" /></Field>
 			<Field label="Гостиница"><Select v-model="hotelId" @change="search"><option value="">Все</option><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></Select></Field>
-			<Field label="Тип"><Select v-model="classId" @change="search"><option value="">Все</option><option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }}</option></Select></Field>
+			<Field label="Тип номера"><Select v-model="classId" @change="search"><option value="">Все</option><option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }}</option></Select></Field>
 			<Button variant="brand" icon="search" @click="search">Найти</Button>
 		</FilterBar>
+
+		<p class="lead">
+			Показаны места, свободные весь период —
+			<b class="contrast">{{ dm(from) }} → {{ dm(to) }}</b> ({{ nightsCount }} {{ nightsWord(nightsCount) }}).
+			День выезда не занимает ночь: место освобождается утром и в этот же день доступно следующему.
+		</p>
 
 		<div v-if="loading" class="muted">Поиск…</div>
 		<template v-else-if="result">
@@ -90,28 +100,11 @@ function onSaved() {
 	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 	gap: var(--gap-md);
 }
-.kpi {
-	background: var(--color-raised-bg);
-	border: 1px solid var(--color-divider);
-	border-radius: var(--radius-lg);
-	padding: var(--gap-md) var(--gap-lg);
-	box-shadow: var(--shadow-card);
-}
-.kpi.accent {
-	background: var(--color-green-bg);
-	border-color: var(--color-green);
-}
-.kpi .v {
-	font-size: var(--font-size-xl);
-	font-weight: 800;
-	color: var(--color-contrast);
-}
-.kpi.accent .v {
-	color: var(--color-green);
-}
-.kpi .l {
-	font-size: var(--font-size-xs);
+.lead {
+	margin: 0;
 	color: var(--color-secondary);
+	font-size: var(--font-size-sm);
+	max-width: 70ch;
 }
 .bedchip {
 	display: flex;

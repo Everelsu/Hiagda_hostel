@@ -16,6 +16,18 @@ const broadcastToStaff = (type, payload) => realtime?.staff(type, payload)
 const roomHotelId = (roomId) => db.prepare("SELECT hotel_id FROM rooms WHERE id = ?").get(roomId)?.hotel_id
 const bedHotelId = (bedId) => db.prepare("SELECT r.hotel_id FROM beds b JOIN rooms r ON r.id = b.room_id WHERE b.id = ?").get(bedId)?.hotel_id
 
+// Даты живут строками «ГГГГ-ММ-ДД» и считаются по местному времени сервера.
+// toISOString() отдаёт UTC: восточнее Гринвича «сегодня» до полудня уезжало на день назад,
+// из-за чего дашборд, карта и графики показывали вчерашний день.
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+const todayStr = () => ymd(new Date())
+const addDays = (date, n) => {
+	const [y, m, d] = String(date).split("-").map(Number)
+	return ymd(new Date(y, m - 1, d + n))
+}
+// Период брони полуоткрытый: ночи с date_from по date_to − 1. В день выезда место уже свободно.
+const nights = (from, to) => Math.round((new Date(`${to}T00:00:00`) - new Date(`${from}T00:00:00`)) / 86400000)
+
 const STAGES = ["expected", "checked_in", "checked_out", "cancelled"]
 const STAGE_TRANSITIONS = {
 	expected: ["checked_in", "cancelled"],
@@ -34,16 +46,15 @@ const MIN_PASSWORD = 6
 const systemStatus = (id) => db.prepare("SELECT name, code FROM statuses WHERE id = ? AND kind = 'system'").get(id)
 const SYSTEM_STATUS_ERROR = {
 	free: "«Свободно» — это отсутствие брони, такой статус не назначается. Выберите статус брони.",
-	repair: "«Ремонт» ставится на номер целиком (протяжка в шахматке → «Поставить на ремонт»), а не бронью на человека.",
+	repair: "«Ремонт» ставится на номер целиком (протяжка в календаре броней → «Поставить на ремонт»), а не бронью на человека.",
 }
 const systemStatusError = (st) => SYSTEM_STATUS_ERROR[st.code] || `Статус «${st.name}» системный и не назначается броням.`
 const weakPassword = (p) => !p || String(p).length < MIN_PASSWORD
 const imagesFor = (ownerType, ownerId) =>
 	db.prepare("SELECT id, url FROM images WHERE owner_type = ? AND owner_id = ? ORDER BY sort, id").all(ownerType, ownerId)
 
-const TRANSLIT = { а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "c", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya" }
 const CYRILLIC_TRANSLIT = { а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "c", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya" }
-const translit = (s) => (s || "").toLowerCase().split("").map((c) => (c in CYRILLIC_TRANSLIT ? CYRILLIC_TRANSLIT[c] : c in TRANSLIT ? TRANSLIT[c] : c)).join("").replace(/[^a-z0-9]/g, "")
+const translit = (s) => (s || "").toLowerCase().split("").map((c) => (c in CYRILLIC_TRANSLIT ? CYRILLIC_TRANSLIT[c] : c)).join("").replace(/[^a-z0-9]/g, "")
 function genUsername(resident) {
 	let base = resident.tab_number ? translit(resident.tab_number) : ""
 	if (!base) {
@@ -175,7 +186,7 @@ api.post("/me/password", (req, res) => {
 })
 
 function activePlacement(residentId) {
-	const today = new Date().toISOString().slice(0, 10)
+	const today = todayStr()
 	return db
 		.prepare(
 			`SELECT p.id, p.date_from, p.date_to, p.stage, p.comment,
@@ -267,7 +278,7 @@ api.get("/me/overview", (req, res) => {
 				 JOIN beds b ON b.id = p.bed_id
 				 JOIN residents r ON r.id = p.resident_id
 				 WHERE b.room_id = ? AND p.stage <> 'cancelled' AND r.id <> ?
-					AND p.date_from <= ? AND p.date_to >= ?
+					AND p.date_from < ? AND p.date_to > ?
 				 ORDER BY r.full_name`,
 			)
 			.all(pl.room_id, rid, pl.date_to, pl.date_from)
@@ -502,7 +513,7 @@ api.post("/issues/:id/comments", (req, res) => {
 api.use(requireStaff)
 
 api.get("/map", (req, res) => {
-	const today = new Date().toISOString().slice(0, 10)
+	const today = todayStr()
 	const hotels = db.prepare("SELECT id, name, settlement, address, phone, latitude, longitude FROM hotels ORDER BY name").all()
 	const out = hotels.map((h) => {
 		const beds = db.prepare("SELECT COUNT(*) c FROM beds b JOIN rooms rm ON rm.id = b.room_id WHERE rm.hotel_id = ?").get(h.id).c
@@ -510,7 +521,7 @@ api.get("/map", (req, res) => {
 			.prepare(
 				`SELECT COUNT(DISTINCT p.bed_id) c FROM placements p
 				 JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
-				 WHERE rm.hotel_id = ? AND p.stage IN ('expected','checked_in') AND p.date_from <= ? AND p.date_to >= ?`,
+				 WHERE rm.hotel_id = ? AND p.stage IN ('expected','checked_in') AND p.date_from <= ? AND p.date_to > ?`,
 			)
 			.get(h.id, today, today).c
 		const arrivals = db
@@ -655,7 +666,7 @@ api.get("/audit", requireRole("admin"), (req, res) => {
 })
 
 api.get("/movements", (req, res) => {
-	const date = req.query.date || new Date().toISOString().slice(0, 10)
+	const date = req.query.date || todayStr()
 	const base = `
 		SELECT p.id, p.date_from, p.date_to, p.comment, p.stage,
 			r.full_name AS resident_name, r.company,
@@ -669,8 +680,8 @@ api.get("/movements", (req, res) => {
 		LEFT JOIN residents r ON r.id = p.resident_id`
 	res.json({
 		date,
-		arrivals: db.prepare(`${base} WHERE p.date_from = ? ORDER BY h.name, rm.number`).all(date),
-		departures: db.prepare(`${base} WHERE p.date_to = ? ORDER BY h.name, rm.number`).all(date),
+		arrivals: db.prepare(`${base} WHERE p.date_from = ? AND p.stage <> 'cancelled' ORDER BY h.name, rm.number`).all(date),
+		departures: db.prepare(`${base} WHERE p.date_to = ? AND p.stage <> 'cancelled' ORDER BY h.name, rm.number`).all(date),
 	})
 })
 
@@ -682,7 +693,7 @@ api.get("/journal", (req, res) => {
 		args.push(req.query.hotel_id)
 	}
 	if (req.query.from && req.query.to) {
-		filters.push("p.date_from <= ? AND p.date_to >= ?")
+		filters.push("p.date_from <= ? AND p.date_to > ?")
 		args.push(req.query.to, req.query.from)
 	}
 	if (req.query.q) {
@@ -714,7 +725,7 @@ api.get("/journal", (req, res) => {
 })
 
 api.get("/summary", (req, res) => {
-	const today = new Date().toISOString().slice(0, 10)
+	const today = todayStr()
 	const hotels = db.prepare("SELECT id, name FROM hotels ORDER BY name").all()
 	const result = hotels.map((h) => {
 		const beds = db
@@ -727,7 +738,7 @@ api.get("/summary", (req, res) => {
 				`SELECT COUNT(DISTINCT b.id) c
 				 FROM beds b JOIN rooms r ON r.id = b.room_id
 				 JOIN placements p ON p.bed_id = b.id
-				 WHERE r.hotel_id = ? AND p.date_from <= ? AND p.date_to >= ?`,
+				 WHERE r.hotel_id = ? AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ?`,
 			)
 			.get(h.id, today, today).c
 		const rooms = db.prepare("SELECT COUNT(*) c FROM rooms WHERE hotel_id = ?").get(h.id).c
@@ -737,7 +748,7 @@ api.get("/summary", (req, res) => {
 })
 
 api.get("/dashboard", (req, res) => {
-	const today = new Date().toISOString().slice(0, 10)
+	const today = todayStr()
 	const hotels = db.prepare("SELECT id, name FROM hotels ORDER BY name").all()
 	let tRooms = 0
 	let tBeds = 0
@@ -748,7 +759,7 @@ api.get("/dashboard", (req, res) => {
 			.prepare(
 				`SELECT COUNT(DISTINCT b.id) c FROM beds b JOIN rooms r ON r.id = b.room_id
 				 JOIN placements p ON p.bed_id = b.id
-				 WHERE r.hotel_id = ? AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ?`,
+				 WHERE r.hotel_id = ? AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ?`,
 			)
 			.get(h.id, today, today).c
 		const rooms = db.prepare("SELECT COUNT(*) c FROM rooms WHERE hotel_id = ?").get(h.id).c
@@ -760,13 +771,11 @@ api.get("/dashboard", (req, res) => {
 
 	const trendStmt = db.prepare(
 		`SELECT COUNT(DISTINCT p.bed_id) c FROM placements p
-		 WHERE p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ?`,
+		 WHERE p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ?`,
 	)
 	const trend = []
 	for (let i = 0; i < 14; i++) {
-		const d = new Date(`${today}T00:00:00`)
-		d.setDate(d.getDate() + i)
-		const day = d.toISOString().slice(0, 10)
+		const day = addDays(today, i)
 		const occ = trendStmt.get(day, day).c
 		trend.push({ date: day, occupied: occ, load: tBeds ? Math.round((occ / tBeds) * 100) : 0 })
 	}
@@ -819,7 +828,7 @@ api.get("/dashboard", (req, res) => {
 })
 
 api.get("/analytics", (req, res) => {
-	const today = new Date().toISOString().slice(0, 10)
+	const today = todayStr()
 	const hotelFilter = req.query.hotel_id ? "AND rm.hotel_id = ?" : ""
 	const hArg = req.query.hotel_id ? [req.query.hotel_id] : []
 
@@ -830,14 +839,12 @@ api.get("/analytics", (req, res) => {
 	const occStmt = db.prepare(
 		`SELECT COUNT(DISTINCT p.bed_id) c FROM placements p
 		 JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
-		 WHERE p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ? ${hotelFilter}`,
+		 WHERE p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ? ${hotelFilter}`,
 	)
 	const occupancy = []
 	let bedNights = 0
 	for (let i = 0; i < 30; i++) {
-		const d = new Date(`${today}T00:00:00`)
-		d.setDate(d.getDate() + i)
-		const day = d.toISOString().slice(0, 10)
+		const day = addDays(today, i)
 		const occ = occStmt.get(day, day, ...hArg).c
 		occupancy.push({ date: day, occupied: occ, load: tBeds ? Math.round((occ / tBeds) * 100) : 0 })
 		bedNights += occ
@@ -853,7 +860,7 @@ api.get("/analytics", (req, res) => {
 			const occ = db
 				.prepare(
 					`SELECT COUNT(DISTINCT p.bed_id) c FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
-					 WHERE rm.hotel_id = ? AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ?`,
+					 WHERE rm.hotel_id = ? AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ?`,
 				)
 				.get(h.id, today, today).c
 			return { name: h.name, beds, occupied: occ, load: beds ? Math.round((occ / beds) * 100) : 0 }
@@ -876,7 +883,7 @@ api.get("/analytics", (req, res) => {
 		.prepare(
 			`SELECT COALESCE(NULLIF(r.company, ''), 'Без организации') company, COUNT(DISTINCT r.id) count
 			 FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id JOIN residents r ON r.id = p.resident_id
-			 WHERE p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to >= ? ${hotelFilter}
+			 WHERE p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ? ${hotelFilter}
 			 GROUP BY company ORDER BY count DESC LIMIT 8`,
 		)
 		.all(today, today, ...hArg)
@@ -888,9 +895,7 @@ api.get("/analytics", (req, res) => {
 	)
 	const movements = []
 	for (let i = 0; i < 14; i++) {
-		const d = new Date(`${today}T00:00:00`)
-		d.setDate(d.getDate() + i)
-		const day = d.toISOString().slice(0, 10)
+		const day = addDays(today, i)
 		const m = movesStmt.get(day, ...hArg, day, ...hArg)
 		movements.push({ date: day, arrivals: m.arrivals, departures: m.departures })
 	}
@@ -909,7 +914,7 @@ api.get("/analytics", (req, res) => {
 api.get("/plan", (req, res) => {
 	try {
 		// Извлекаем переданную дату из параметров запроса фронтенда
-		const date = req.query.date || new Date().toISOString().slice(0, 10);
+		const date = req.query.date || todayStr();
 
 		// 1. Собираем комнаты с подсчетом новых жалоб
 		const rooms = db.prepare(`
@@ -930,7 +935,7 @@ api.get("/plan", (req, res) => {
 			FROM placements p
 			JOIN statuses s ON s.id = p.status_id
 			LEFT JOIN residents r ON r.id = p.resident_id
-			WHERE p.bed_id = ? AND p.date_from <= ? AND p.date_to >= ? LIMIT 1
+			WHERE p.bed_id = ? AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ? LIMIT 1
 		`)
 		const blockStmt = db.prepare(`
 			SELECT id, reason, date_from, date_to 
@@ -1464,7 +1469,7 @@ api.put("/rooms/:id", requireRole("editor"), (req, res) => {
 api.delete("/rooms/:id", requireRole("editor"), (req, res) => {
 	const id = Number(req.params.id)
 	// Удаление каскадом сносит места и брони. Текущие и будущие брони так терять нельзя.
-	const today = new Date().toISOString().slice(0, 10)
+	const today = todayStr()
 	const active = db
 		.prepare(
 			`SELECT COUNT(*) c FROM placements p JOIN beds b ON b.id = p.bed_id
@@ -1509,7 +1514,7 @@ api.get("/availability", (req, res) => {
 				SELECT 1 FROM placements p WHERE p.bed_id = b.id AND p.stage <> 'cancelled' AND p.date_from < ? AND p.date_to > ?
 			 )
 			 AND NOT EXISTS (
-				SELECT 1 FROM room_blocks rb WHERE rb.room_id = rm.id AND rb.date_from <= ? AND rb.date_to >= ?
+				SELECT 1 FROM room_blocks rb WHERE rb.room_id = rm.id AND rb.date_from < ? AND rb.date_to >= ?
 			 )
 			 ${where}
 			 ORDER BY h.name, rm.floor, rm.number, b.id`,
@@ -1546,6 +1551,18 @@ api.post("/rooms/:id/blocks", requireRepair, (req, res) => {
 	const { date_from, date_to, reason } = req.body || {}
 	if (!date_from || !date_to) return res.status(400).json({ error: "Укажите период ремонта" })
 	if (date_to < date_from) return res.status(400).json({ error: "Дата окончания раньше начала" })
+	if (!db.prepare("SELECT id FROM rooms WHERE id = ?").get(req.params.id)) return res.status(404).json({ error: "Номер не найден" })
+	// Ремонт снимает с продажи весь номер, поэтому уже стоящие на эти ночи брони надо
+	// сначала перенести — иначе человек окажется в номере, которого «нет».
+	const busy = db
+		.prepare(
+			`SELECT COUNT(*) c FROM placements p JOIN beds b ON b.id = p.bed_id
+			 WHERE b.room_id = ? AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ?`,
+		)
+		.get(req.params.id, date_to, date_from).c
+	if (busy) {
+		return res.status(409).json({ error: `На эти даты в номере есть брони (${busy}). Перенесите или отмените их перед ремонтом.` })
+	}
 	const info = db
 		.prepare("INSERT INTO room_blocks (room_id, date_from, date_to, reason) VALUES (?,?,?,?)")
 		.run(req.params.id, date_from, date_to, reason || null)
@@ -1639,7 +1656,7 @@ api.get("/placements", (req, res) => {
 	const args = []
 	const filters = []
 	if (req.query.from && req.query.to) {
-		filters.push("p.date_from <= ? AND p.date_to >= ?")
+		filters.push("p.date_from <= ? AND p.date_to > ?")
 		args.push(req.query.to, req.query.from)
 	}
 	if (req.query.bed_id) {
@@ -1695,14 +1712,16 @@ function findConflict(bedId, from, to, excludeId) {
 		.get(bedId, excludeId || 0, to, from)
 }
 
-// Ремонт [X,Y] делает номер недоступным по ночь Y включительно.
+// Ремонт [X,Y] делает номер недоступным по ночь Y включительно, то есть занимает [X, Y+1).
+// Бронь [from,to) пересекается с ним ⟺ X < to И from <= Y: ремонт, начинающийся в день
+// выезда, брони не мешает — человек к этому моменту уже съехал.
 function findBlock(bedId, from, to) {
 	return db
 		.prepare(
 			`SELECT rb.date_from, rb.date_to, rb.reason
 			 FROM room_blocks rb
 			 JOIN beds b ON b.room_id = rb.room_id
-			 WHERE b.id = ? AND rb.date_from <= ? AND rb.date_to >= ?
+			 WHERE b.id = ? AND rb.date_from < ? AND rb.date_to >= ?
 			 LIMIT 1`,
 		)
 		.get(bedId, to, from)
@@ -1721,7 +1740,7 @@ api.post("/placements", requireRole("editor"), (req, res) => {
 	if (!STAGES.includes(stage)) return res.status(400).json({ error: "Неизвестная стадия брони" })
 	const sysNew = systemStatus(status_id)
 	if (sysNew) return res.status(400).json({ error: systemStatusError(sysNew) })
-	if (date_to < date_from) return res.status(400).json({ error: "Дата выезда раньше даты заезда" })
+	if (!(nights(date_from, date_to) >= 1)) return res.status(400).json({ error: "Выезд должен быть позже заезда: бронь — минимум одна ночь" })
 	const conflict = findConflict(bed_id, date_from, date_to)
 	if (conflict) {
 		return res.status(409).json({
@@ -1741,10 +1760,10 @@ api.post("/placements", requireRole("editor"), (req, res) => {
 api.put("/placements/:id", requireRole("editor"), (req, res) => {
 	const { resident_id, status_id, date_from, date_to, comment } = req.body || {}
 	if (!status_id || !date_from || !date_to) return res.status(400).json({ error: "Заполните статус и даты" })
-	if (date_to < date_from) return res.status(400).json({ error: "Дата выезда раньше даты заезда" })
+	if (!(nights(date_from, date_to) >= 1)) return res.status(400).json({ error: "Выезд должен быть позже заезда: бронь — минимум одна ночь" })
 	const current = db.prepare("SELECT bed_id, stage FROM placements WHERE id = ?").get(req.params.id)
 	if (!current) return res.status(404).json({ error: "Размещение не найдено" })
-	// Перенос брони на другое место (перетаскивание в шахматке)
+	// Перенос брони на другое место (перетаскивание в календаре броней)
 	const bedId = req.body?.bed_id ? Number(req.body.bed_id) : current.bed_id
 	if (bedId !== current.bed_id && !db.prepare("SELECT id FROM beds WHERE id = ?").get(bedId)) {
 		return res.status(400).json({ error: "Место не найдено" })

@@ -47,7 +47,7 @@ const bookingStatuses = computed(() => statuses.value.filter((s) => s.kind !== "
 const systemStatuses = computed(() => statuses.value.filter((s) => s.kind === "system"))
 const SYSTEM_WHY = {
 	free: "место свободно — когда на нём нет брони",
-	repair: "номер на ремонте — ставится в шахматке или в плане этажа, на весь номер",
+	repair: "номер на ремонте — ставится в календаре броней или в плане этажа, на весь номер",
 }
 
 const tabs = computed(() => [
@@ -142,7 +142,7 @@ async function addAmenity() {
 
 		<!-- ТИПЫ НОМЕРОВ -->
 		<template v-if="tab === 'classes'">
-			<p class="lead">Тип номера — категория из ТЗ: по нему фильтруется шахматка и поиск свободных мест.</p>
+			<p class="lead">Тип номера — категория вроде «Одноместный» или «Двухместный». По нему фильтруются календарь броней и поиск свободных мест.</p>
 
 			<Card v-if="canEdit" pad="md" class="addbar">
 				<Input v-model="newClass" placeholder="Например: Двухместный" @keyup.enter="addClass" />
@@ -171,7 +171,7 @@ async function addAmenity() {
 		<!-- СТАТУСЫ -->
 		<template v-else-if="tab === 'statuses'">
 			<p class="lead">
-				Цвет статуса — это цвет ленты в шахматке. Статус брони назначают человеку при заселении.
+				Цвет статуса — это цвет ленты брони в календаре броней. Статус брони назначают человеку при заселении.
 				Свободно и Ремонт — производные состояния: их никому не назначают, они только задают цвет.
 			</p>
 

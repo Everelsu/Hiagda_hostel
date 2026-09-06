@@ -415,3 +415,82 @@ test("слишком короткий пароль отклоняется", asyn
 	})
 	assert.equal(weak.status, 400)
 })
+
+test("бронь «на ноль ночей» отклоняется", async () => {
+	const res = await call("POST", "/placements", {
+		token: adminToken,
+		body: { bed_id: bedId, resident_id: residentId, status_id: statusId, date_from: "2028-01-05", date_to: "2028-01-05" },
+	})
+	assert.equal(res.status, 400, "бронь без единой ночи сохранять нельзя")
+	assert.match(res.json.error, /минимум одна ночь/i)
+})
+
+test("ремонт с дня выезда брони не мешает, а поверх брони — не ставится", async () => {
+	const hotel = await call("POST", "/hotels", { token: adminToken, body: { name: "Дом ремонта" } })
+	const created = await call("POST", "/rooms", { token: adminToken, body: { hotel_id: hotel.json.id, number: "501", capacity: 1 } })
+	const rooms = await call("GET", `/rooms?hotel_id=${hotel.json.id}`, { token: adminToken })
+	const room = rooms.json.find((r) => r.id === created.json.id)
+
+	const booking = await call("POST", "/placements", {
+		token: adminToken,
+		body: { bed_id: room.beds[0].id, resident_id: residentId, status_id: statusId, date_from: "2028-05-01", date_to: "2028-05-05" },
+	})
+	assert.equal(booking.status, 200)
+
+	const over = await call("POST", `/rooms/${room.id}/blocks`, {
+		token: adminToken,
+		body: { date_from: "2028-05-03", date_to: "2028-05-08" },
+	})
+	assert.equal(over.status, 409, "ремонт поверх занятых ночей должен отклоняться")
+
+	const after = await call("POST", `/rooms/${room.id}/blocks`, {
+		token: adminToken,
+		body: { date_from: "2028-05-05", date_to: "2028-05-08" },
+	})
+	assert.equal(after.status, 200, "ремонт с дня выезда — свободные ночи, конфликта нет")
+
+	const nextGuest = await call("POST", "/placements", {
+		token: adminToken,
+		body: { bed_id: room.beds[0].id, resident_id: residentId, status_id: statusId, date_from: "2028-04-28", date_to: "2028-05-01" },
+	})
+	assert.equal(nextGuest.status, 200, "бронь, кончающаяся до ремонта, проходит")
+})
+
+test("план этажа не считает отменённую бронь занятым местом", async () => {
+	const hotel = await call("POST", "/hotels", { token: adminToken, body: { name: "Дом плана" } })
+	const created = await call("POST", "/rooms", { token: adminToken, body: { hotel_id: hotel.json.id, number: "601", capacity: 1 } })
+	const rooms = await call("GET", `/rooms?hotel_id=${hotel.json.id}`, { token: adminToken })
+	const room = rooms.json.find((r) => r.id === created.json.id)
+
+	const booking = await call("POST", "/placements", {
+		token: adminToken,
+		body: { bed_id: room.beds[0].id, resident_id: residentId, status_id: statusId, date_from: "2028-08-01", date_to: "2028-08-10" },
+	})
+	const plan = await call("GET", `/plan?hotel_id=${hotel.json.id}&date=2028-08-05`, { token: adminToken })
+	assert.equal(plan.json.rooms.find((r) => r.id === room.id).occupied, 1)
+
+	await call("PUT", `/placements/${booking.json.id}`, {
+		token: adminToken,
+		body: { resident_id: residentId, status_id: statusId, stage: "cancelled", date_from: "2028-08-01", date_to: "2028-08-10" },
+	})
+	const after = await call("GET", `/plan?hotel_id=${hotel.json.id}&date=2028-08-05`, { token: adminToken })
+	assert.equal(after.json.rooms.find((r) => r.id === room.id).occupied, 0, "отменённая бронь не занимает место")
+})
+
+test("в день выезда место снова свободно для поиска", async () => {
+	const hotel = await call("POST", "/hotels", { token: adminToken, body: { name: "Дом пересменки" } })
+	const created = await call("POST", "/rooms", { token: adminToken, body: { hotel_id: hotel.json.id, number: "701", capacity: 1 } })
+	const rooms = await call("GET", `/rooms?hotel_id=${hotel.json.id}`, { token: adminToken })
+	const room = rooms.json.find((r) => r.id === created.json.id)
+
+	await call("POST", "/placements", {
+		token: adminToken,
+		body: { bed_id: room.beds[0].id, resident_id: residentId, status_id: statusId, date_from: "2028-11-01", date_to: "2028-11-10" },
+	})
+
+	const busy = await call("GET", `/availability?hotel_id=${hotel.json.id}&from=2028-11-05&to=2028-11-12`, { token: adminToken })
+	assert.equal(busy.json.totals.free_beds, 0, "занятые ночи в выдачу не попадают")
+
+	const free = await call("GET", `/availability?hotel_id=${hotel.json.id}&from=2028-11-10&to=2028-11-15`, { token: adminToken })
+	assert.equal(free.json.totals.free_beds, 1, "с дня выезда место снова доступно")
+})

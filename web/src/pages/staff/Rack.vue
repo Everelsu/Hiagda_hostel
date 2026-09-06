@@ -1,6 +1,7 @@
 <script setup>
 /**
- * Шахматка брони. Взаимодействие:
+ * Календарь броней: строки — спальные места, столбцы — дни, лента — одна бронь.
+ * Взаимодействие:
  *  - протяжка по свободным клеткам — новая бронь;
  *  - перетаскивание ленты — перенос на другое место/даты;
  *  - тяга за край ленты — продлить/сократить;
@@ -10,6 +11,7 @@ import { ref, onMounted, onUnmounted, computed, reactive, watch, nextTick } from
 import { useRoute, useRouter } from "vue-router"
 import { onRealtime } from "@/realtime"
 import { api, post, put, del } from "@/api/client"
+import { nightsWord, dm } from "@/utils/date"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
 import PlacementModal from "@/components/PlacementModal.vue"
@@ -277,10 +279,20 @@ const selectedId = ref(null)
 const pick = reactive({ show: false, f: null, from: "", to: "" })
 const repairForm = reactive({ show: false, reason: "" })
 
+// Выделение — это ночи: с pick.from по pick.to включительно, значит выезд на день позже.
+const pickNights = computed(() => (pick.from && pick.to ? dayDiff(pick.from, pick.to) + 1 : 0))
+const pickStayText = computed(() => `Заезд ${dm(pick.from)}, выезд ${dm(addDays(pick.to, 1))} — ${pickNights.value} ${nightsWord(pickNights.value)}`)
+const pickRepairText = computed(() => `Ремонт с ${dm(pick.from)} по ${dm(pick.to)} включительно — ${pickNights.value} ${nightsWord(pickNights.value)}`)
+// Подпись к брони: заезд, выезд и сколько ночей между ними
+function stayText(p) {
+	const n = dayDiff(p.date_from, p.date_to)
+	return `${dm(p.date_from)} → ${dm(p.date_to)} · ${n} ${nightsWord(n)}`
+}
+
 function pickBooking() {
 	pick.show = false
 	placement.value = {
-		bed: { id: pick.f.bed.id, label: `${pick.f.room.number} · ${pick.f.bed.label}` },
+		bed: { id: pick.f.bed.id, label: `Номер № ${pick.f.room.number} · ${pick.f.bed.label}` },
 		existing: null,
 		date: pick.from,
 		dateTo: addDays(pick.to, 1),
@@ -386,8 +398,10 @@ function rangeFree(bedId, dFrom, dTo, ignoreId) {
 		if (p.date_from < dTo && dFrom < p.date_to) return false
 	}
 	const f = flatBeds.value.find((x) => x.bed.id === bedId)
+	// Ремонт [X,Y] занимает ночи по Y включительно, поэтому мешает брони [dFrom,dTo)
+	// только при X < dTo и dFrom <= Y: ремонт с дня выезда уже не пересекается.
 	for (const b of data.value.blocks) {
-		if (f && b.room_id === f.room.id && b.date_from <= dTo && dFrom <= b.date_to) return false
+		if (f && b.room_id === f.room.id && b.date_from < dTo && dFrom <= b.date_to) return false
 	}
 	return true
 }
@@ -489,7 +503,7 @@ async function commitGhost() {
 
 function openPlacement(p) {
 	const f = flatBeds.value.find((x) => x.bed.id === p.bed_id)
-	placement.value = { bed: { id: p.bed_id, label: f ? `${f.room.number} · ${f.bed.label}` : "" }, existing: p, date: p.date_from }
+	placement.value = { bed: { id: p.bed_id, label: f ? `Номер № ${f.room.number} · ${f.bed.label}` : "" }, existing: p, date: p.date_from }
 }
 function onSaved() {
 	placement.value = null
@@ -559,7 +573,7 @@ async function quickStage(p, stage) {
 }
 async function cancelBooking(p) {
 	menu.show = false
-	if (!(await confirm({ title: "Отменить бронь?", message: `${p.resident_name || p.status_name}, ${p.date_from} – ${p.date_to}`, danger: true, confirmLabel: "Отменить" }))) return
+	if (!(await confirm({ title: "Отменить бронь?", message: `${p.resident_name || p.status_name}, ${stayText(p)}`, danger: true, confirmLabel: "Отменить" }))) return
 	try {
 		await put(`/placements/${p.id}`, { resident_id: p.resident_id, status_id: p.status_id, stage: "cancelled", date_from: p.date_from, date_to: p.date_to, comment: p.comment })
 		pop.show = false
@@ -662,46 +676,73 @@ const selStyle = computed(() => {
 
 <template>
 	<div class="grid">
-		<PageHeader title="Бронирование" subtitle="Протяжка — новая бронь · лента — перенос и края · правый клик — меню · «?» — клавиши" icon="calendar">
+		<PageHeader title="Календарь броней" subtitle="Строка — спальное место, столбец — сутки, цветная лента — бронь" icon="calendar">
 			<template #actions>
-				<Button icon="info" @click="showHelp = true">Клавиши</Button>
+				<Button icon="info" @click="showHelp = true">Как пользоваться</Button>
 			</template>
 		</PageHeader>
 
 		<div class="toolbar">
-			<Select v-model="hotelId" style="width: auto" @change="load">
-				<option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option>
-			</Select>
-			<Input v-model="from" type="date" style="width: auto" @change="load" />
-			<div class="segs">
-				<button v-for="s in [7, 14, 30, 60]" :key="s" type="button" class="seg" :class="{ on: span === s }" @click="span = s; load()">{{ s }}д</button>
+			<label class="tbf">
+				<span class="tbf__label">Гостиница</span>
+				<Select v-model="hotelId" style="width: auto" @change="load">
+					<option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option>
+				</Select>
+			</label>
+			<label class="tbf">
+				<span class="tbf__label">Начало периода</span>
+				<Input v-model="from" type="date" style="width: auto" @change="load" />
+			</label>
+			<div class="tbf">
+				<span class="tbf__label">Показывать дней</span>
+				<div class="segs">
+					<button v-for="s in [7, 14, 30, 60]" :key="s" type="button" class="seg" :class="{ on: span === s }" @click="span = s; load()">{{ s }}</button>
+				</div>
 			</div>
-			<Select v-model="classFilter" style="width: auto">
-				<option value="">Все типы</option>
-				<option v-for="c in classOptions" :key="c" :value="c">{{ c }}</option>
-			</Select>
-			<div class="nav">
-				<Button size="sm" icon="chevron-left" @click="shiftFrom(-7)" />
-				<Button size="sm" @click="goToday">Сегодня</Button>
-				<Button size="sm" icon="chevron-right" @click="shiftFrom(7)" />
+			<label class="tbf">
+				<span class="tbf__label">Тип номера</span>
+				<Select v-model="classFilter" style="width: auto">
+					<option value="">Все типы</option>
+					<option v-for="c in classOptions" :key="c" :value="c">{{ c }}</option>
+				</Select>
+			</label>
+			<div class="tbf">
+				<span class="tbf__label">Перелистать</span>
+				<div class="nav">
+					<Button size="sm" icon="chevron-left" title="Неделя назад" @click="shiftFrom(-7)" />
+					<Button size="sm" @click="goToday">Сегодня</Button>
+					<Button size="sm" icon="chevron-right" title="Неделя вперёд" @click="shiftFrom(7)" />
+				</div>
 			</div>
-			<div class="search-wrap">
-				<Input ref="searchEl" v-model="search" placeholder="Найти проживающего (F)" />
-				<span v-if="search.trim()" class="hits" :class="{ none: !searchHits }">{{ searchHits }}</span>
-			</div>
+			<label class="tbf grow">
+				<span class="tbf__label">Поиск проживающего</span>
+				<div class="search-wrap">
+					<Input ref="searchEl" v-model="search" placeholder="Фамилия или имя (клавиша F)" />
+					<span
+						v-if="search.trim()"
+						class="hits"
+						:class="{ none: !searchHits }"
+						:title="searchHits ? `Подсвечено броней: ${searchHits}` : 'Ничего не найдено'"
+					>{{ searchHits }}</span>
+				</div>
+			</label>
 		</div>
 
 		<div class="legend">
+			<span class="legend__title">Цвет ленты — статус брони:</span>
 			<span v-for="s in bookingStatuses" :key="s.id" class="leg"><StatusDot :color="s.color" /> {{ s.name }}</span>
-			<span class="leg"><i class="sw sw-exp" /> ожидается</span>
-			<span class="leg"><i class="sw sw-repair" :style="{ '--rep': repairColor }" /> {{ repairName }}</span>
+			<span class="leg" title="Бронь оформлена, человек ещё не заселён"><i class="sw sw-exp" /> ожидается заезд</span>
+			<span class="leg" title="Номер снят с брони на время ремонта"><i class="sw sw-repair" :style="{ '--rep': repairColor }" /> {{ repairName }}</span>
 		</div>
 
 		<div ref="scrollEl" class="rack" :class="{ busy }" @pointerdown="onDown" @contextmenu="onContext" @pointerleave="schedulePopHide">
 			<div class="rack-inner" :style="gridStyle">
 				<!-- шапка -->
 				<div class="head">
-					<div class="corner"><span>Номер · место</span></div>
+					<div class="corner">
+						<span class="corner__cols">Номер · место</span>
+						<span class="corner__free">свободных мест</span>
+					</div>
 					<div class="months">
 						<div v-for="m in monthSpans" :key="m.key" class="month" :style="{ width: m.colspan * COL + 'px' }">{{ m.label }}</div>
 					</div>
@@ -710,8 +751,7 @@ const selStyle = computed(() => {
 							<span class="wd">{{ d.wd }}</span><span class="dn">{{ d.num }}</span>
 						</div>
 					</div>
-					<div class="freerow">
-						<div class="freelabel">свободно</div>
+					<div class="freerow" title="Сколько спальных мест остаётся свободными в каждый день">
 						<div
 							v-for="(f, i) in layout.freePerDay"
 							:key="i"
@@ -781,7 +821,8 @@ const selStyle = computed(() => {
 				<StatusDot :color="pop.p.status_color" size="12px" />
 				<b class="contrast">{{ pop.p.resident_name || pop.p.status_name }}</b>
 			</div>
-			<div class="muted pop-sub">{{ pop.p.date_from }} – {{ pop.p.date_to }} · {{ STAGE_LABEL[pop.p.stage] || pop.p.status_name }}</div>
+			<div class="muted pop-sub">{{ stayText(pop.p) }}</div>
+			<div class="muted pop-sub">{{ STAGE_LABEL[pop.p.stage] || pop.p.status_name }}</div>
 			<p v-if="pop.p.comment" class="pop-note">{{ pop.p.comment }}</p>
 			<div v-if="canEdit" class="pop-acts">
 				<Button v-for="a in STAGE_ACTIONS[pop.p.stage] || []" :key="a.to" size="sm" :variant="a.variant" :icon="a.icon" @click="quickStage(pop.p, a.to)">{{ a.label }}</Button>
@@ -805,7 +846,7 @@ const selStyle = computed(() => {
 
 		<!-- Что делаем с выделенным диапазоном -->
 		<Modal v-if="pick.show" :title="`№ ${pick.f.room.number} · ${pick.f.bed.label}`" @close="pick.show = false">
-			<p class="pick-dates">{{ pick.from }} – {{ pick.to }}</p>
+			<p class="pick-dates">{{ pickStayText }}</p>
 			<div class="pick-opts">
 				<button v-if="canEdit" type="button" class="pick-opt" @click="pickBooking">
 					<Icon name="user" size="1.3rem" />
@@ -826,7 +867,7 @@ const selStyle = computed(() => {
 
 		<!-- Ремонт: только период и причина -->
 		<Modal v-if="repairForm.show" :title="`Ремонт номера № ${pick.f.room.number}`" @close="repairForm.show = false">
-			<p class="pick-dates">{{ pick.from }} – {{ pick.to }} · номер будет недоступен для брони</p>
+			<p class="pick-dates">{{ pickRepairText }} · на это время номер нельзя забронировать</p>
 			<Input v-model="repairForm.reason" placeholder="Причина (необязательно): течёт кран, замена окна…" />
 			<template #foot>
 				<Button variant="ghost" @click="repairForm.show = false">Отмена</Button>
@@ -834,7 +875,12 @@ const selStyle = computed(() => {
 			</template>
 		</Modal>
 
-		<Modal v-if="showHelp" title="Горячие клавиши и жесты" @close="showHelp = false">
+		<Modal v-if="showHelp" title="Как пользоваться календарём броней" @close="showHelp = false">
+			<p class="help-intro">
+				Каждая строка — одно спальное место, каждый столбец — сутки. Цветная лента поперёк дней — это бронь:
+				она начинается в день заезда и заканчивается в день выезда. В день выезда место уже свободно —
+				в него можно селить следующего вахтовика (пересменка).
+			</p>
 			<div class="keys">
 				<div class="kgroup">
 					<h4>Навигация</h4>
@@ -872,9 +918,25 @@ const selStyle = computed(() => {
 <style scoped>
 .toolbar {
 	display: flex;
-	align-items: center;
+	align-items: flex-end;
 	gap: var(--gap-sm);
 	flex-wrap: wrap;
+}
+/* Подпись над каждым фильтром: без неё непонятно, что значит дата и «30» */
+.tbf {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+.tbf.grow {
+	flex: 1;
+	min-width: 200px;
+	max-width: 340px;
+}
+.tbf__label {
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+	white-space: nowrap;
 }
 .segs {
 	display: inline-flex;
@@ -923,8 +985,14 @@ const selStyle = computed(() => {
 }
 .legend {
 	display: flex;
+	align-items: center;
 	gap: var(--gap-md);
 	flex-wrap: wrap;
+}
+.legend__title {
+	font-size: var(--font-size-xs);
+	font-weight: 700;
+	color: var(--color-secondary);
 }
 .leg {
 	display: inline-flex;
@@ -982,14 +1050,28 @@ const selStyle = computed(() => {
 	width: calc(var(--rack-num) + var(--rack-bed));
 	height: 80px;
 	display: flex;
-	align-items: flex-end;
-	padding: var(--gap-sm);
+	flex-direction: column;
+	justify-content: flex-end;
+	padding: 0 var(--gap-sm);
 	background: var(--color-raised-bg);
 	border-right: 1px solid var(--color-divider);
 	z-index: 2;
 	font-size: var(--font-size-xs);
 	font-weight: 700;
 	color: var(--color-secondary);
+}
+/* Подписи к двум нижним строкам шапки: колонки слева и итог свободных мест по дням */
+.corner__cols {
+	height: 38px;
+	display: flex;
+	align-items: flex-end;
+	padding-bottom: 4px;
+}
+.corner__free {
+	height: 22px;
+	line-height: 22px;
+	font-size: 10px;
+	font-weight: 400;
 }
 .months,
 .daysrow,
@@ -1043,13 +1125,6 @@ const selStyle = computed(() => {
 .freerow {
 	top: 58px;
 	height: 22px;
-}
-.freelabel {
-	position: absolute;
-	left: calc(-1 * (var(--rack-num) + var(--rack-bed)) + 8px);
-	font-size: 10px;
-	color: var(--color-secondary);
-	line-height: 22px;
 }
 .free {
 	width: var(--rack-col);
@@ -1361,6 +1436,12 @@ kbd {
 	background: var(--color-bg);
 	border: 1px solid var(--color-divider);
 	border-radius: 4px;
+}
+.help-intro {
+	margin: 0 0 var(--gap-md);
+	color: var(--color-secondary);
+	font-size: var(--font-size-sm);
+	line-height: 1.5;
 }
 .keys {
 	display: grid;

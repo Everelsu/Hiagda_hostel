@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed, watch } from "vue"
 import { api, post, put, del } from "@/api/client"
+import { today } from "@/utils/date"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
 import { useCounters } from "@/stores/counters"
@@ -16,7 +17,7 @@ const canRepair = auth.canRepair // ремонтник тоже ставит и 
 
 const hotels = ref([])
 const hotelId = ref(null)
-const date = ref(new Date().toISOString().slice(0, 10))
+const date = ref(today())
 const rooms = ref([])
 const shapes = ref([])
 const floor = ref(null)
@@ -264,12 +265,12 @@ function openBed(bed) {
 
 <template>
 	<div class="grid">
-		<PageHeader title="План этажа" subtitle="Схема здания: где какой номер и что занято" icon="layout">
+		<PageHeader title="План этажа" subtitle="Схема здания: где какой номер и что занято на выбранную дату" icon="layout">
 			<template #actions>
-				<Select v-model="hotelId" style="width: auto" @change="load">
+				<Select v-model="hotelId" style="width: auto" title="Гостиница" @change="load">
 					<option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option>
 				</Select>
-				<Input v-if="!editing" v-model="date" type="date" style="width: auto" @change="load" />
+				<Input v-if="!editing" v-model="date" type="date" style="width: auto" title="На какую дату показывать занятость" @change="load" />
 				<Button v-if="canEdit && !editing" icon="pencil" @click="editing = true">Редактировать план</Button>
 				<template v-else-if="canEdit">
 					<Button variant="ghost" @click="editing = false">Отмена</Button>

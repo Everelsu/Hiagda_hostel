@@ -5,6 +5,7 @@
  */
 import { ref, onMounted, computed, watch } from "vue"
 import { api, download } from "@/api/client"
+import { today, addDays } from "@/utils/date"
 import { toast } from "@/toast"
 import Icon from "@/components/Icon.vue"
 import { PageHeader, Card, Tabs, Input, Select, Button, IconButton, Chip, StatusDot, EmptyState, Skeleton } from "@/ui"
@@ -22,7 +23,7 @@ const to = ref("")
 const rows = ref([])
 
 /* заезды/выезды */
-const day = ref(new Date().toISOString().slice(0, 10))
+const day = ref(today())
 const moves = ref(null)
 const movesLoading = ref(false)
 
@@ -119,11 +120,9 @@ function personReport(r) {
 	download("/report/resident/" + r.resident_id)
 }
 function shiftDay(n) {
-	const d = new Date(day.value)
-	d.setDate(d.getDate() + n)
-	day.value = d.toISOString().slice(0, 10)
+	day.value = addDays(day.value, n)
 }
-const isToday = computed(() => day.value === new Date().toISOString().slice(0, 10))
+const isToday = computed(() => day.value === today())
 </script>
 
 <template>
@@ -191,7 +190,7 @@ const isToday = computed(() => day.value === new Date().toISOString().slice(0, 1
 				<Button size="sm" icon="chevron-left" @click="shiftDay(-1)" />
 				<Input v-model="day" type="date" style="width: auto" />
 				<Button size="sm" icon="chevron-right" @click="shiftDay(1)" />
-				<Button v-if="!isToday" size="sm" @click="day = new Date().toISOString().slice(0, 10)">Сегодня</Button>
+				<Button v-if="!isToday" size="sm" @click="day = today()">Сегодня</Button>
 				<span class="grow" />
 				<span class="muted daysum">
 					заездов <b class="contrast">{{ moves?.arrivals.length || 0 }}</b> ·

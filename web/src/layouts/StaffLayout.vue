@@ -1,8 +1,9 @@
 <script setup>
-import { ref, computed, onMounted, watch } from "vue"
+import { ref, computed, onMounted, onUnmounted, watch } from "vue"
 import { useRouter, useRoute } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
 import { useCounters } from "@/stores/counters"
+import { onRealtime } from "@/realtime"
 import { STAFF_NAV } from "@/config/nav"
 import Icon from "@/components/Icon.vue"
 import { IconButton, Badge } from "@/ui"
@@ -46,6 +47,12 @@ watch(() => route.path, () => {
 	mobileOpen.value = false
 	counters.refresh()
 })
+
+// Бейдж заявок должен меняться сразу, а не только при переходе между разделами
+const stopRealtime = onRealtime((event) => {
+	if (event.type === "issues:changed") counters.refresh()
+})
+onUnmounted(stopRealtime)
 </script>
 
 <template>

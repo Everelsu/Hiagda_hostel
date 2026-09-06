@@ -47,7 +47,8 @@ export async function download(path) {
     a.click()
     a.remove()
 
-    URL.revokeObjectURL(url)
+    // Отзываем ссылку не сразу: часть браузеров не успевает начать скачивание
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 export const get = (p) => api(p)

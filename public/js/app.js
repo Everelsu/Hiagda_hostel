@@ -629,7 +629,7 @@ function renderStats() {
 	}
 }
 
-/* перетаскивание по шахматке для создания брони (как в Bnovo) */
+/* перетаскивание по календарю броней для создания брони (как в Bnovo) */
 let dragState = null
 function updateDragHighlight() {
 	document.querySelectorAll("td.day.drag-sel").forEach((c) => c.classList.remove("drag-sel"))
@@ -1351,7 +1351,7 @@ const ROLE_OPTIONS = [
 	["admin", "Администратор"],
 ]
 const ROLE_DESC = {
-	viewer: "Только просмотр шахматки и отчётов",
+	viewer: "Только просмотр броней и отчётов",
 	editor: "Управление номерами, бронями и проживающими",
 	admin: "Полный доступ + управление пользователями",
 }

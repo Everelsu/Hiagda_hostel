@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from "vue"
 import { api, post, put, del } from "@/api/client"
+import { addDays, nightsBetween, nightsWord } from "@/utils/date"
 import { toast } from "@/toast"
 import Modal from "@/components/Modal.vue"
 import { Field, Input, Select, Textarea, Button, Avatar, Chip, confirm } from "@/ui"
@@ -23,9 +24,14 @@ const suggestions = ref([])
 const statusId = ref(props.existing?.status_id || null)
 const stage = ref(props.existing?.stage || "expected")
 const dateFrom = ref(props.existing?.date_from || props.date)
-const dateTo = ref(props.existing?.date_to || props.dateTo || props.date)
+// Бронь — это ночи, а не дни: по умолчанию выезд на сутки позже заезда.
+// Раньше сюда попадала та же дата, и сохранялась бронь «на ноль ночей» — невидимая в календаре.
+const dateTo = ref(props.existing?.date_to || props.dateTo || addDays(props.date, 1))
 const comment = ref(props.existing?.comment || "")
 const busy = ref(false)
+
+const nights = computed(() => nightsBetween(dateFrom.value, dateTo.value))
+const nightsLabel = computed(() => (nights.value < 1 ? "выезд должен быть позже заезда" : `${nights.value} ${nightsWord(nights.value)}`))
 
 const stageOptions = computed(() => (props.existing ? [stage.value, ...(STAGE_NEXT[props.existing.stage] || [])] : ["expected", "checked_in"]))
 const canCreate = computed(() => {
@@ -81,6 +87,9 @@ async function save() {
 		if (!(await confirm({ title: "Отменить бронь?", danger: true, confirmLabel: "Отменить бронь" }))) return
 	} else if (!selected.value?.id) {
 		return toast.error("Выберите профиль вахтовика")
+	}
+	if (stage.value !== "cancelled" && !(nights.value >= 1)) {
+		return toast.error("Дата выезда должна быть позже даты заезда: бронь — минимум одна ночь")
 	}
 	const payload = {
 		bed_id: props.bed.id,
@@ -139,8 +148,11 @@ async function remove() {
 
 		<div class="two">
 			<Field label="Заезд"><Input v-model="dateFrom" type="date" /></Field>
-			<Field label="Выезд"><Input v-model="dateTo" type="date" /></Field>
+			<Field label="Выезд"><Input v-model="dateTo" type="date" :min="dateFrom" /></Field>
 		</div>
+		<p class="nights" :class="{ bad: !(nights >= 1) }">
+			{{ nightsLabel }}<template v-if="nights >= 1"> · в день выезда место освобождается и уже доступно следующему</template>
+		</p>
 		<div class="two">
 			<Field label="Статус"><Select v-model="statusId"><option v-for="s in statuses" :key="s.id" :value="s.id">{{ s.name }}</option></Select></Field>
 			<Field label="Стадия брони"><Select v-model="stage"><option v-for="v in stageOptions" :key="v" :value="v">{{ STAGES[v] }}</option></Select></Field>
@@ -160,6 +172,15 @@ async function remove() {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
 	gap: var(--gap-md);
+}
+.nights {
+	margin: -4px 0 0;
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+}
+.nights.bad {
+	color: var(--color-red);
+	font-weight: 700;
 }
 .picked {
 	display: flex;

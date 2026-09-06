@@ -158,7 +158,7 @@ function openRack(row) {
 
 						<a v-if="selected.phone" :href="`tel:${selected.phone}`" class="phone"><Icon name="phone" size="0.9em" /> {{ selected.phone }}</a>
 
-						<Button variant="primary" icon="calendar" class="rack-btn" @click="openRack(selected)">Открыть шахматку</Button>
+						<Button variant="primary" icon="calendar" class="rack-btn" @click="openRack(selected)">Открыть календарь броней</Button>
 					</Card>
 
 					<div class="list">
