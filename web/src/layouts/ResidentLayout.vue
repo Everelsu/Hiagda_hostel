@@ -7,6 +7,7 @@ import { toast } from "@/toast"
 import { loadFeed, unread } from "@/api/me"
 import Icon from "@/components/Icon.vue"
 import Modal from "@/components/Modal.vue"
+import { Input } from "@/ui"
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -96,8 +97,8 @@ async function changePassword() {
 
 		<Modal v-if="auth.user?.must_change_password" title="Смените пароль для первого входа">
 			<p class="muted" style="margin: 0">Для безопасности задайте свой пароль вместо выданного.</p>
-			<div class="field"><label>Текущий (выданный) пароль</label><input v-model="curPass" type="password" /></div>
-			<div class="field"><label>Новый пароль</label><input v-model="newPass" type="password" /></div>
+			<div class="field"><label>Текущий (выданный) пароль</label><Input v-model="curPass" type="password" /></div>
+			<div class="field"><label>Новый пароль</label><Input v-model="newPass" type="password" /></div>
 			<template #foot>
 				<button class="btn" @click="logout">Выйти</button>
 				<button class="btn btn-primary" :disabled="busy" @click="changePassword">Сохранить и войти</button>
