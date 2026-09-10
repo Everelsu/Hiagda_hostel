@@ -34,6 +34,7 @@ const residentColumns = [
 	{ key: "full_name", label: "ФИО", sortable: true },
 	{ key: "tab_number", label: "Табельный №", sortable: true },
 	{ key: "company", label: "Организация", sortable: true },
+	{ key: "department", label: "Подразделение", sortable: true },
 	{ key: "position", label: "Должность" },
 	{ key: "account_username", label: "Доступ" },
 ]
@@ -63,13 +64,13 @@ async function loadResidents() {
 
 function newResident() {
 	profile.value = { id: null, full_name: "" }
-	form.value = { full_name: "", tab_number: "", company: "", position: "", phone: "", note: "" }
+	form.value = { full_name: "", tab_number: "", company: "", department: "", position: "", phone: "", note: "" }
 	stays.value = []
 	profileTab.value = "data"
 }
 async function openProfile(r) {
 	profile.value = { ...r }
-	form.value = { full_name: r.full_name, tab_number: r.tab_number || "", company: r.company || "", position: r.position || "", phone: r.phone || "", note: r.note || "" }
+	form.value = { full_name: r.full_name, tab_number: r.tab_number || "", company: r.company || "", department: r.department || "", position: r.position || "", phone: r.phone || "", note: r.note || "" }
 	profileTab.value = "data"
 	stays.value = []
 	try {
@@ -280,6 +281,7 @@ function fmt(d) {
 					<Field label="Табельный №"><Input v-model="form.tab_number" /></Field>
 					<Field label="Организация"><Input v-model="form.company" /></Field>
 				</div>
+				<Field label="Подразделение"><Input v-model="form.department" /></Field>
 				<div class="two">
 					<Field label="Должность"><Input v-model="form.position" /></Field>
 					<Field label="Телефон"><Input v-model="form.phone" /></Field>

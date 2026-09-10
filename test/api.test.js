@@ -1,32 +1,73 @@
 // Интеграционные тесты ключевой логики: пересечение броней и права роли «Просмотр».
-// Запуск: npm test  (изолированная временная БД через NOCHOTEL_DB, эфемерный порт).
+// Запуск: npm test
+//
+// Нужна ОТДЕЛЬНАЯ тестовая база PostgreSQL: перед прогоном её схема удаляется
+// целиком, поэтому рабочую базу сюда указывать нельзя. Адрес берётся из
+// TEST_DATABASE_URL, иначе — из DATABASE_URL/PG* с подменой имени базы на
+// nochotel_test. Завести её один раз:
+//     createdb -U postgres -O nochotel nochotel_test
 const test = require("node:test")
 const assert = require("node:assert/strict")
 const { once } = require("node:events")
-const os = require("node:os")
-const path = require("node:path")
-const fs = require("node:fs")
+const { Client } = require("pg")
 
-const dbFile = path.join(os.tmpdir(), `nochotel-test-${process.pid}-${Date.now()}.db`)
-process.env.NOCHOTEL_DB = dbFile
-process.env.PORT = "0" // эфемерный порт, чтобы не конфликтовать с рабочим сервером
-process.env.JWT_SECRET = "test-secret"
+require("../server/env").loadEnv()
 
-const { server } = require("../server/index.js")
+// Тестовая база не должна случайно совпасть с рабочей — отсюда и явная подмена имени.
+function testDatabaseUrl() {
+	if (process.env.TEST_DATABASE_URL) return process.env.TEST_DATABASE_URL
+	if (process.env.DATABASE_URL) {
+		const u = new URL(process.env.DATABASE_URL)
+		u.pathname = "/nochotel_test"
+		return u.toString()
+	}
+	const user = encodeURIComponent(process.env.PGUSER || "nochotel")
+	const pass = encodeURIComponent(process.env.PGPASSWORD || "")
+	const host = process.env.PGHOST || "127.0.0.1"
+	const port = process.env.PGPORT || "5432"
+	return `postgresql://${user}${pass ? `:${pass}` : ""}@${host}:${port}/nochotel_test`
+}
 
 let base
+let server
+
 test.before(async () => {
+	const url = testDatabaseUrl()
+	if (/\/nochotel(\?|$)/.test(new URL(url).pathname + (new URL(url).search || ""))) {
+		throw new Error("TEST_DATABASE_URL указывает на рабочую базу nochotel — тесты её сотрут. Заведите nochotel_test.")
+	}
+	process.env.DATABASE_URL = url
+	process.env.PORT = "0" // эфемерный порт, чтобы не конфликтовать с рабочим сервером
+	process.env.JWT_SECRET = "test-secret"
+
+	// Чистая схема на каждый прогон: тесты начинают с пустой базы (первый из них
+	// создаёт администратора, а это возможно только пока пользователей нет).
+	const client = new Client({ connectionString: url })
+	try {
+		await client.connect()
+	} catch (e) {
+		throw new Error(
+			`не удалось подключиться к тестовой базе (${e.message}). ` +
+				"Создайте её: createdb -U postgres -O nochotel nochotel_test — или задайте TEST_DATABASE_URL.",
+		)
+	}
+	await client.query("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;")
+	await client.end()
+
+	// Сервер подключаем только сейчас: при загрузке модуля он сразу поднимает схему,
+	// и сделать это надо уже на очищенной базе.
+	const app = require("../server/index.js")
+	server = app.server
+	await app.ready
 	if (!server.listening) await once(server, "listening")
 	base = `http://127.0.0.1:${server.address().port}/api`
 })
 
-test.after(() => {
-	server.close()
-	for (const f of [dbFile, `${dbFile}-wal`, `${dbFile}-shm`]) {
-		try { fs.unlinkSync(f) } catch {}
-	}
+test.after(async () => {
+	server?.close()
+	// Без закрытия пула процесс тестов остаётся висеть на живых соединениях.
+	await require("../server/db").close()
 })
-
 async function call(method, url, { token, body } = {}) {
 	const res = await fetch(base + url, {
 		method,

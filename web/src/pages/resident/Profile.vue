@@ -80,6 +80,7 @@ async function changePassword() {
 			<div class="two">
 				<Field label="Табельный №"><Input :model-value="resident?.tab_number || '—'" disabled /></Field>
 				<Field label="Организация"><Input :model-value="resident?.company || '—'" disabled /></Field>
+				<Field label="Подразделение"><Input :model-value="resident?.department || '—'" disabled /></Field>
 			</div>
 			<Field label="Телефон"><Input v-model="phone" placeholder="+7 …" /></Field>
 			<div class="privacy">

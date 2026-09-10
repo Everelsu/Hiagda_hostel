@@ -2,7 +2,7 @@
 	"name": "nochotel",
 	"version": "0.2.0",
 	"private": true,
-	"description": "Учёт номерного фонда вахтовых гостиниц (АО Хиагда). Vue 3 + Express + SQLite.",
+	"description": "Учёт номерного фонда вахтовых гостиниц (АО Хиагда). Vue 3 + Express + PostgreSQL.",
 	"type": "commonjs",
 	"scripts": {
 		"start": "node server/index.js",
@@ -11,17 +11,20 @@
 		"dev": "concurrently -k -n api,web -c blue,green \"node --watch server/index.js\" \"vite\"",
 		"build": "vite build",
 		"seed": "node server/seed.js",
-		"test": "node --test"
+		"test": "node --test",
+		"backup": "node scripts/backup.js",
+		"restore": "node scripts/restore.js",
+		"migrate-from-sqlite": "node scripts/migrate-sqlite-to-pg.js"
 	},
 	"dependencies": {
 		"bcryptjs": "^2.4.3",
-		"better-sqlite3": "^11.3.0",
 		"cors": "^2.8.5",
 		"exceljs": "^4.4.0",
 		"express": "^4.21.0",
 		"jsonwebtoken": "^9.0.2",
 		"leaflet": "^1.9.4",
 		"multer": "^2.0.0",
+		"pg": "^8.13.1",
 		"pinia": "^2.2.6",
 		"vue": "^3.5.13",
 		"vue-router": "^4.4.5",

@@ -3,6 +3,9 @@ dist/
 data/*.db
 data/*.db-*
 data/.jwtsecret
+# Резервные копии содержат персональные данные проживающих — в репозиторий не кладём
+backups/
+data.before-restore-*
 *.log
 .env
 docs/practice/diagrams.py

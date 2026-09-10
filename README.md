@@ -5,7 +5,7 @@
 ## Архитектура
 
 - **Frontend:** Vue 3 + Vite + Vue Router + Pinia (`web/`). Сборка отдаётся бэкендом.
-- **Backend:** Node.js + Express + SQLite (`better-sqlite3`), JWT-авторизация (`server/`).
+- **Backend:** Node.js + Express + PostgreSQL (`pg`), JWT-авторизация (`server/`).
 - **Один сервер:** Express раздаёт собранный фронтенд (`dist/`) и API (`/api`).
 - Тема и токены оформления — Noctrinth/Modrinth (тёмная / светлая).
 
@@ -34,14 +34,26 @@
 
 ## Запуск
 
-Нужен [Node.js](https://nodejs.org/) LTS (18+).
+Нужны [Node.js](https://nodejs.org/) LTS (18+) и PostgreSQL 13+.
+
+Один раз создайте базу и пользователя:
+
+```bash
+sudo -u postgres createuser --pwprompt nochotel
+sudo -u postgres createdb --owner=nochotel nochotel
+```
+
+Скопируйте `.env.example` в `.env` и пропишите пароль (`PGPASSWORD` либо `DATABASE_URL`
+целиком). Дальше как обычно:
 
 ```bash
 npm install        # зависимости (бэкенд + фронтенд)
-npm run seed       # БД, статусы, классы, удобства, демо-гостиница и демо-вахтовик
+npm run seed       # статусы, классы, удобства, демо-гостиница и демо-вахтовик
 npm run build      # собрать фронтенд в dist/
 npm start          # сервер → http://localhost:3000
 ```
+
+Таблицы создаются сами при первом запуске — отдельная команда миграции не нужна.
 
 При первом входе откроется форма **«Создать администратора»**. Демо-вахтовик из сидов: логин `vahta`, пароль `vahta`.
 
@@ -55,30 +67,147 @@ npm run dev        # Express (:3000) + Vite (:5173) одновременно
 
 ### Тесты
 
+Тестам нужна отдельная база: перед каждым прогоном её схема удаляется целиком.
+
 ```bash
-npm test           # интеграционные тесты (брони, перенос, права ролей, план этажа) на временной БД
+sudo -u postgres createdb --owner=nochotel nochotel_test
+npm test           # брони, перенос, права ролей, план этажа
 ```
+
+Адрес можно задать явно через `TEST_DATABASE_URL`; по умолчанию берётся подключение
+из `.env` с именем базы `nochotel_test`.
 
 ## Продакшен / размещение на сервере
 
-1. Задайте окружение (см. `.env.example`): скопируйте в `.env`, пропишите **свой** `JWT_SECRET`.
-   Без него секрет сгенерируется автоматически и сохранится в `data/.jwtsecret`.
+1. Заведите базу и пользователя PostgreSQL (см. «Запуск»), задайте окружение в `.env`:
+   `DATABASE_URL` (или `PG*`) и **свой** `JWT_SECRET`. Без последнего секрет
+   сгенерируется автоматически и сохранится в `data/.jwtsecret`.
 2. Соберите фронтенд и запустите один процесс Node — он раздаёт и API, и `dist/`:
 
    ```bash
    npm ci --omit=dev && npm run build
-   JWT_SECRET=... PORT=3000 npm start
+   npm start
    ```
 
-3. Держите процесс живым менеджером (например `pm2 start server/index.js --name nochotel`
-   или unit systemd) и поставьте перед ним reverse-proxy (nginx) с HTTPS.
-4. **Бэкап:** вся база — это файл `data/nochotel.db` (+ `-wal`/`-shm`). Копируйте его по расписанию.
-   Путь можно вынести на отдельный диск через `NOCHOTEL_DB`.
+3. Держите процесс живым через systemd (unit ниже) и поставьте перед ним
+   reverse-proxy (nginx) с HTTPS.
+4. Настройте резервное копирование по расписанию — см. отдельный раздел.
+
+### systemd
+
+`/etc/systemd/system/nochotel.service`:
+
+```ini
+[Unit]
+Description=NochOtel
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=nochotel
+WorkingDirectory=/opt/nochotel
+EnvironmentFile=/opt/nochotel/.env
+ExecStart=/usr/bin/node server/index.js
+Restart=always
+RestartSec=5
+# Ограничения на случай компрометации процесса
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/nochotel/data /var/backups/nochotel
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now nochotel
+```
+
+## Резервное копирование
+
+```bash
+npm run backup     # снять копию
+npm run restore -- backups/2026-09-09_0300          # показать, что будет сделано
+npm run restore -- backups/2026-09-09_0300 --yes    # восстановить
+```
+
+Копия — каталог с временем в имени:
+
+```
+backups/2026-09-09_0300/
+  database.dump   дамп PostgreSQL в формате custom (сжатый)
+  files.tar.gz    содержимое data/ — фотографии номеров и вложения к заявкам
+  manifest.json   когда снято, размеры, контрольная сумма SHA-256
+```
+
+Дамп сразу проверяется на читаемость (`pg_restore --list`), а при восстановлении
+сверяется контрольная сумма — повреждённый файл не попадёт в базу. Восстановление
+идёт одной транзакцией: при сбое данные остаются нетронутыми. Прежний `data/` не
+удаляется, а переименовывается в `data.before-restore-…`.
+
+Настройки — в `.env`: `BACKUP_DIR` (куда складывать, по умолчанию `./backups`),
+`BACKUP_KEEP` (сколько копий хранить, по умолчанию 14), `PG_BIN` (каталог с
+`pg_dump`/`pg_restore`, если их нет в `PATH`).
+
+### По расписанию
+
+`/etc/systemd/system/nochotel-backup.service` и `…timer`:
+
+```ini
+[Unit]
+Description=Резервная копия NochOtel
+
+[Service]
+Type=oneshot
+User=nochotel
+WorkingDirectory=/opt/nochotel
+EnvironmentFile=/opt/nochotel/.env
+ExecStart=/usr/bin/node scripts/backup.js
+```
+
+```ini
+[Unit]
+Description=Ежедневная резервная копия NochOtel
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl enable --now nochotel-backup.timer
+```
+
+Либо через cron: `0 3 * * * cd /opt/nochotel && /usr/bin/node scripts/backup.js`.
+
+Копии содержат персональные данные проживающих — каталог создаётся с правами `0700`,
+дамп `0600`. Храните хотя бы одну копию вне сервера приложения.
+
+## Перенос со старой версии (SQLite)
+
+Если система уже работала на SQLite, данные переносятся одной командой. Нужен
+Node.js 22.5+ (старую базу читает встроенный модуль `node:sqlite`).
+
+```bash
+node scripts/migrate-sqlite-to-pg.js                 # показать, что будет перенесено
+node scripts/migrate-sqlite-to-pg.js --yes           # перенести
+```
+
+Идентификаторы сохраняются: ссылки между таблицами, номера броней и уже выданные
+учётки остаются прежними. Целевая база должна быть пустой. После переноса проверьте
+вход и календарь броней и сразу снимите первую копию: `npm run backup`.
 
 ## Структура
 
 ```
-server/      Express API + SQLite (index.js, db.js, auth.js, seed.js)
+server/      Express API + PostgreSQL (index.js, db.js, auth.js, env.js, seed.js)
+scripts/     backup.js, restore.js, migrate-sqlite-to-pg.js
 web/         Vue 3 + Vite фронтенд
   src/
     pages/     Login, staff/*, resident/* (Home, Room, Plan, Hotel, Issues, Profile)
@@ -89,12 +218,13 @@ web/         Vue 3 + Vite фронтенд
     styles/    токены Noctrinth + база
 dist/        собранный фронтенд (генерируется)
 public/      классический интерфейс (доступен на /legacy на время переноса)
-data/        файл базы (создаётся при первом запуске)
+data/        загруженные файлы и .jwtsecret
+backups/     резервные копии (создаётся при первом npm run backup)
 ```
 
 ## Схема БД
 
-`users(resident_id, role) · residents(about, photo) · hotels(settlement, address, phone, rules) · rooms(plan_x, plan_y, plan_w, plan_h) · beds · placements(stage) · statuses · room_classes · amenities · room_amenities · hotel_amenities · places · plan_shapes · reviews(room_id) · room_issues · room_blocks · announcements · audit_log`
+`users(resident_id, role) · residents(about, photo, department) · hotels(settlement, address, phone, rules) · rooms(plan_x, plan_y, plan_w, plan_h) · beds · placements(stage) · statuses · room_classes · amenities · room_amenities · hotel_amenities · places · plan_shapes · reviews(room_id) · room_issues · room_blocks · announcements · audit_log`
 
 Роли: `admin` / `editor` / `observer` (просмотр) / `maintenance` (ремонтная служба) — персонал; `viewer` — вахтовик (привязан к `residents` через `users.resident_id`).
 `maintenance` в иерархию прав не встроен: по номерному фонду и броням он на уровне наблюдателя, но обслуживает заявки и `room_blocks` (проверка `requireRepair`).
