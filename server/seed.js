@@ -9,9 +9,9 @@ async function seed() {
 		// Системные состояния (Свободно / Ремонт) создаёт db.js — они не назначаются броням.
 		// Здесь только статусы, которые оператор реально ставит человеку.
 		if ((await t.prepare("SELECT COUNT(*) c FROM statuses WHERE kind = 'booking'").get()).c === 0) {
-			const ins = t.prepare("INSERT INTO statuses (name, color, sort, kind) VALUES (?,?,?,'booking')")
-			await ins.run("Забронировано", "#5fc8ff", 1)
-			await ins.run("Проживает", "#1bd96a", 2)
+			const ins = t.prepare("INSERT INTO statuses (name, color, sort, kind, stage) VALUES (?,?,?,'booking',?)")
+			await ins.run("Забронировано", "#5fc8ff", 1, "expected")
+			await ins.run("Проживает", "#1bd96a", 2, "checked_in")
 			console.log("Созданы базовые статусы брони")
 		}
 

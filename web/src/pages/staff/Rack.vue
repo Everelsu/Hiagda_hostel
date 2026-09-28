@@ -17,7 +17,7 @@ import { useAuthStore } from "@/stores/auth"
 import PlacementModal from "@/components/PlacementModal.vue"
 import Icon from "@/components/Icon.vue"
 import Modal from "@/components/Modal.vue"
-import { PageHeader, Select, Input, Button, StatusDot, confirm, DateInput } from "@/ui"
+import { Select, Input, Button, IconButton, SegmentedControl, StatusDot, confirm, DateInput } from "@/ui"
 
 // Ширина дня подстраивается под экран (чтобы 7–30 дней не оставляли пустоту справа),
 // высота строки — плотность: «компактно» помещает вдвое больше мест на экран.
@@ -44,6 +44,7 @@ const classFilter = ref("")
 const search = ref("")
 const searchEl = ref(null)
 const showHelp = ref(false)
+const SPANS = [7, 14, 30, 60].map((n) => ({ value: n, label: n + " дн." }))
 
 const data = ref({ rooms: [], placements: [], blocks: [] })
 const loading = ref(false)
@@ -96,7 +97,35 @@ const systemStatus = (code) => statuses.value.find((s) => s.code === code)
 const repairColor = computed(() => systemStatus("repair")?.color || "var(--color-orange)")
 const repairName = computed(() => systemStatus("repair")?.name || "Ремонт")
 
-const rooms = computed(() => (classFilter.value ? data.value.rooms.filter((r) => r.class_name === classFilter.value) : data.value.rooms))
+// В доме на сотни мест нужны фильтры: этаж и «только номера со свободными местами»
+const floorFilter = ref("")
+const onlyFree = ref(false)
+const floorOptions = computed(() => [...new Set(data.value.rooms.map((r) => r.floor ?? 1))].sort((a, b) => a - b))
+// Сколько ночей периода занято у каждого места (брони + ремонт номера)
+const busyNights = computed(() => {
+	const m = new Map()
+	const last = days.value[days.value.length - 1]
+	const add = (bedId, a, b) => m.set(bedId, (m.get(bedId) || 0) + Math.max(0, dayDiff(a, b)))
+	for (const p of data.value.placements) {
+		if (p.stage === "cancelled") continue
+		add(p.bed_id, p.date_from > from.value ? p.date_from : from.value, p.date_to < addDays(last, 1) ? p.date_to : addDays(last, 1))
+	}
+	for (const b of data.value.blocks) {
+		const room = data.value.rooms.find((r) => r.id === b.room_id)
+		const end = addDays(b.date_to, 1)
+		for (const bed of room?.beds || []) add(bed.id, b.date_from > from.value ? b.date_from : from.value, end < addDays(last, 1) ? end : addDays(last, 1))
+	}
+	return m
+})
+const roomHasFree = (room) => (room.beds || []).some((b) => (busyNights.value.get(b.id) || 0) < span.value)
+const rooms = computed(() =>
+	data.value.rooms.filter(
+		(r) =>
+			(!classFilter.value || r.class_name === classFilter.value) &&
+			(floorFilter.value === "" || String(r.floor ?? 1) === String(floorFilter.value)) &&
+			(!onlyFree.value || roomHasFree(r)),
+	),
+)
 const classOptions = computed(() => [...new Set(data.value.rooms.map((r) => r.class_name).filter(Boolean))])
 
 const flatBeds = computed(() => {
@@ -217,6 +246,44 @@ const layout = computed(() => {
 })
 const lowThresh = computed(() => Math.max(1, Math.round(layout.value.totalBeds * 0.2)))
 const searchHits = computed(() => (search.value.trim() ? layout.value.ribbons.filter((r) => r.hit).length : 0))
+// Enter в поиске — к следующему найденному (Shift+Enter — к предыдущему):
+// среди сотен строк подсветка без прокрутки бесполезна
+const hitIdx = ref(-1)
+const hitList = computed(() => layout.value.ribbons.filter((r) => r.hit && !r.ghost).sort((a, b) => a.row - b.row || a.leftPx - b.leftPx))
+watch(search, () => (hitIdx.value = -1))
+function jumpHit(dir) {
+	const list = hitList.value
+	if (!list.length) return
+	hitIdx.value = (hitIdx.value + dir + list.length) % list.length
+	const r = list[hitIdx.value]
+	selectedId.value = r.id
+	const el = scrollEl.value
+	el?.scrollTo({ top: Math.max(0, r.row * rowH.value - el.clientHeight / 2 + HEAD), left: Math.max(0, r.leftPx - 120), behavior: "smooth" })
+}
+
+// ── плотность и подгонка ширины дня под экран ──
+const dense = ref(false)
+try {
+	dense.value = localStorage.getItem("rack_dense") === "1"
+} catch {}
+watch(
+	dense,
+	(v) => {
+		rowH.value = v ? 24 : 34
+		try {
+			localStorage.setItem("rack_dense", v ? "1" : "0")
+		} catch {}
+	},
+	{ immediate: true },
+)
+function fit() {
+	const el = scrollEl.value
+	if (!el) return
+	colW.value = Math.max(24, Math.min(72, Math.floor((el.clientWidth - LEFT - 2) / span.value)))
+}
+watch(span, () => nextTick(fit))
+let resizeObs = null
+const hoverRow = ref(-1)
 
 /* ---------- данные ---------- */
 async function load() {
@@ -240,6 +307,9 @@ onMounted(async () => {
 	window.addEventListener("pointermove", onMove)
 	window.addEventListener("pointerup", onUp)
 	window.addEventListener("keydown", onKey)
+	resizeObs = new ResizeObserver(fit)
+	if (scrollEl.value) resizeObs.observe(scrollEl.value)
+	fit()
 })
 const stopRealtime = onRealtime((event) => {
 	if (event.type !== "rack:changed" || Number(event.hotelId) !== Number(hotelId.value)) return
@@ -251,6 +321,7 @@ onUnmounted(() => {
 	window.removeEventListener("pointermove", onMove)
 	window.removeEventListener("pointerup", onUp)
 	window.removeEventListener("keydown", onKey)
+	resizeObs?.disconnect()
 	stopRealtime()
 })
 
@@ -273,8 +344,13 @@ const mode = ref(null) // pan | select | move | resize-l | resize-r
 let panStart = null
 let moved = false
 const sel = reactive({ active: false, bedId: null, row: 0, a: 0, b: 0 })
-const drag = reactive({ id: null, p: null, grabCol: 0, kind: null })
-const ghost = reactive({ active: false, p: null, bedId: null, from: "", to: "", ok: true })
+const drag = reactive({ id: null, p: null, startCol: 0, kind: null, x0: 0, y0: 0 })
+const ghost = reactive({ active: false, p: null, bedId: null, from: "", to: "", ok: true, x: 0, y: 0 })
+// Защита от случайного переноса (как в Noctrinth): перетаскивание начинается только
+// после сдвига мыши на DRAG_THRESHOLD px, а результат подтверждается отдельно.
+const DRAG_THRESHOLD = 6
+const confirmMove = reactive({ show: false, x: 0, y: 0 })
+let lastMove = null // для «Отменить» / Ctrl+Z
 const menu = reactive({ show: false, p: null, x: 0, y: 0 })
 const selectedId = ref(null)
 // Выбор действия после протяжки по свободным клеткам
@@ -369,14 +445,22 @@ function onDown(e) {
 	if (e.button === 1 || !loc || loc.region !== "grid") return startPan(e)
 
 	if (loc.placement) {
+		const wasSelected = selectedId.value === loc.placement.id
 		selectedId.value = loc.placement.id
 		if (!canEdit) return startPan(e)
-		const zone = ribbonZone(loc.placement, loc.gx)
-		drag.id = loc.placement.id
-		drag.p = loc.placement
-		drag.kind = zone
-		drag.grabCol = loc.col - dayDiff(from.value, loc.placement.date_from)
-		mode.value = zone
+		let zone = ribbonZone(loc.placement, loc.gx)
+		// Края тянутся только у уже выбранной ленты: первый клик выбирает, второй хватает край.
+		// Иначе клик у самого края ленты незаметно продлевал бронь на день.
+		if (!wasSelected && zone !== "move") zone = "move"
+		Object.assign(drag, {
+			id: loc.placement.id,
+			p: loc.placement,
+			kind: zone,
+			startCol: loc.col,
+			x0: e.clientX,
+			y0: e.clientY,
+		})
+		mode.value = "armed"
 		e.preventDefault()
 		return
 	}
@@ -409,6 +493,10 @@ function rangeFree(bedId, dFrom, dTo, ignoreId) {
 }
 
 function onMove(e) {
+	if (!mode.value) {
+		const loc = locate(e.clientX, e.clientY)
+		hoverRow.value = loc?.region === "grid" ? loc.row : -1
+	}
 	if (mode.value === "pan" && panStart) {
 		const dx = e.clientX - panStart.x
 		const dy = e.clientY - panStart.y
@@ -430,18 +518,24 @@ function onMove(e) {
 		sel.b = b
 		return
 	}
+	if (mode.value === "armed") {
+		// Пока мышь почти на месте — это клик, а не перетаскивание
+		if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < DRAG_THRESHOLD) return
+		mode.value = drag.kind
+	}
 	if (mode.value === "move" || mode.value === "resize-l" || mode.value === "resize-r") {
 		const loc = locate(e.clientX, e.clientY)
 		if (!loc || loc.region !== "grid") return
 		const p = drag.p
 		const nights = dayDiff(p.date_from, p.date_to)
-		moved = true
 		let bedId = p.bed_id
 		let dFrom = p.date_from
 		let dTo = p.date_to
 		if (mode.value === "move") {
 			bedId = loc.f.bed.id
-			dFrom = days.value[Math.max(0, Math.min(span.value - 1, loc.col - drag.grabCol))] || from.value
+			// Сдвиг — от точки нажатия, а не от края экрана: у ленты, начатой левее видимого
+			// периода, прежний расчёт прыгал на первый видимый день
+			dFrom = addDays(p.date_from, loc.col - drag.startCol)
 			dTo = addDays(dFrom, nights)
 		} else if (mode.value === "resize-l") {
 			dFrom = days.value[loc.col] || p.date_from
@@ -450,13 +544,15 @@ function onMove(e) {
 			dTo = days.value[loc.col] ? addDays(days.value[loc.col], 1) : p.date_to
 			if (dayDiff(dFrom, dTo) < 1) dTo = addDays(dFrom, 1)
 		}
-		Object.assign(ghost, { active: true, p, bedId, from: dFrom, to: dTo, ok: rangeFree(bedId, dFrom, dTo, p.id) })
+		// Призрак показываем, только когда что-то реально меняется
+		moved = bedId !== p.bed_id || dFrom !== p.date_from || dTo !== p.date_to
+		Object.assign(ghost, { active: moved, p, bedId, from: dFrom, to: dTo, ok: rangeFree(bedId, dFrom, dTo, p.id), x: e.clientX, y: e.clientY })
 		return
 	}
 	if (mode.value === null) hover(e)
 }
 
-async function onUp() {
+async function onUp(e) {
 	if (mode.value === "select" && sel.active) {
 		const a = Math.min(sel.a, sel.b)
 		const b = Math.max(sel.a, sel.b)
@@ -464,17 +560,61 @@ async function onUp() {
 		// Спрашиваем, что делаем с выделенным диапазоном: селим человека или ставим номер на ремонт.
 		// Ремонт — это room_blocks, профиль вахтовика для него не нужен.
 		if (f) Object.assign(pick, { show: true, f, from: days.value[a], to: days.value[b] })
+	} else if (mode.value === "armed" && drag.p) {
+		openPlacement(drag.p) // обычный клик по ленте
 	} else if (ghost.active && moved) {
-		await commitGhost()
-	} else if (drag.p && !moved) {
-		openPlacement(drag.p)
+		if (!ghost.ok) toast.error("Туда нельзя: место занято или номер на ремонте")
+		else {
+			// Не записываем сразу — показываем «было → стало» и ждём подтверждения
+			Object.assign(confirmMove, { show: true, x: e?.clientX || 0, y: e?.clientY || 0 })
+			mode.value = null
+			return
+		}
 	}
 	mode.value = null
 	sel.active = false
+	resetDrag()
+	setTimeout(() => (moved = false), 0)
+}
+function resetDrag() {
 	ghost.active = false
 	drag.id = null
 	drag.p = null
-	setTimeout(() => (moved = false), 0)
+	confirmMove.show = false
+}
+function cancelMove() {
+	resetDrag()
+	moved = false
+}
+const bedName = (bedId) => {
+	const f = flatBeds.value.find((x) => x.bed.id === bedId)
+	return f ? `№ ${f.room.number} · ${f.bed.label}` : "—"
+}
+const range = (a, b) => `${dm(a)} – ${dm(b)}`
+const confirmStyle = computed(() => ({
+	left: Math.min(confirmMove.x + 12, window.innerWidth - 340) + "px",
+	top: Math.min(confirmMove.y + 12, window.innerHeight - 220) + "px",
+}))
+async function applyMove() {
+	confirmMove.show = false
+	await commitGhost()
+	resetDrag()
+	moved = false
+}
+async function undoMove() {
+	if (!lastMove) return
+	const m = lastMove
+	lastMove = null
+	busy.value = true
+	try {
+		await put(`/placements/${m.id}`, m.prev)
+		toast.success("Перенос отменён")
+		await load()
+	} catch (err) {
+		toast.error(err.message)
+	} finally {
+		busy.value = false
+	}
 }
 
 async function commitGhost() {
@@ -484,17 +624,11 @@ async function commitGhost() {
 	if (!ok) return toast.error("Место занято или на ремонте")
 	if (bedId === p.bed_id && dFrom === p.date_from && dTo === p.date_to) return
 	busy.value = true
+	const base = { resident_id: p.resident_id, status_id: p.status_id, stage: p.stage, comment: p.comment }
 	try {
-		await put(`/placements/${p.id}`, {
-			bed_id: bedId,
-			resident_id: p.resident_id,
-			status_id: p.status_id,
-			stage: p.stage,
-			date_from: dFrom,
-			date_to: dTo,
-			comment: p.comment,
-		})
-		toast.success(bedId === p.bed_id ? "Даты изменены" : "Бронь перенесена")
+		await put(`/placements/${p.id}`, { ...base, bed_id: bedId, date_from: dFrom, date_to: dTo })
+		lastMove = { id: p.id, prev: { ...base, bed_id: p.bed_id, date_from: p.date_from, date_to: p.date_to } }
+		toast.action(bedId === p.bed_id ? "Даты изменены" : "Бронь перенесена", "Отменить (Ctrl+Z)", undoMove)
 		await load()
 	} catch (e) {
 		toast.error(e.message)
@@ -568,6 +702,8 @@ async function quickStage(p, stage) {
 		await post(`/placements/${p.id}/stage`, { stage })
 		p.stage = stage
 		menu.show = false
+		// цвет ленты сменился на сервере вместе со стадией
+		load()
 		toast.success(`Стадия: «${STAGE_LABEL[stage]}»`)
 	} catch (e) {
 		toast.error(e.message)
@@ -586,18 +722,12 @@ async function cancelBooking(p) {
 }
 function nudge(p, days) {
 	Object.assign(ghost, { active: false })
-	put(`/placements/${p.id}`, {
-		bed_id: p.bed_id,
-		resident_id: p.resident_id,
-		status_id: p.status_id,
-		stage: p.stage,
-		date_from: addDays(p.date_from, days),
-		date_to: addDays(p.date_to, days),
-		comment: p.comment,
-	})
+	const base = { bed_id: p.bed_id, resident_id: p.resident_id, status_id: p.status_id, stage: p.stage, comment: p.comment }
+	put(`/placements/${p.id}`, { ...base, date_from: addDays(p.date_from, days), date_to: addDays(p.date_to, days) })
 		.then(() => {
 			menu.show = false
-			toast.success(days > 0 ? "Сдвинуто вперёд" : "Сдвинуто назад")
+			lastMove = { id: p.id, prev: { ...base, date_from: p.date_from, date_to: p.date_to } }
+			toast.action(days > 0 ? "Сдвинуто на день вперёд" : "Сдвинуто на день назад", "Отменить (Ctrl+Z)", undoMove)
 			load()
 		})
 		.catch((e) => toast.error(e.message))
@@ -609,6 +739,15 @@ const selectedPlacement = computed(() => data.value.placements.find((p) => p.id 
 function onKey(e) {
 	const tag = (e.target?.tagName || "").toLowerCase()
 	const typing = tag === "input" || tag === "textarea" || tag === "select"
+	if (confirmMove.show) {
+		if (e.code === "Enter" || e.code === "NumpadEnter") (e.preventDefault(), applyMove())
+		if (e.code === "Escape") (e.preventDefault(), cancelMove())
+		return
+	}
+	if ((e.ctrlKey || e.metaKey) && e.code === "KeyZ" && !typing && lastMove) {
+		e.preventDefault()
+		return undoMove()
+	}
 	if (e.key === "Escape") {
 		if (menu.show) return (menu.show = false)
 		if (showHelp.value) return (showHelp.value = false)
@@ -617,46 +756,41 @@ function onKey(e) {
 		return
 	}
 	if (typing) return
+	// Сочетания с Ctrl/Alt/⌘ — браузерные (Ctrl+F, Ctrl+T), их не перехватываем
+	if (e.ctrlKey || e.metaKey || e.altKey) return
 	const p = selectedPlacement.value
-	switch (e.key) {
+	// e.code — физическая клавиша: в русской раскладке «F» приходит как «а»,
+	// а код клавиши тот же, поэтому сочетания работают в любой раскладке
+	switch (e.code) {
 		case "ArrowRight":
 			e.preventDefault()
 			return shiftFrom(e.shiftKey ? 30 : 7)
 		case "ArrowLeft":
 			e.preventDefault()
 			return shiftFrom(e.shiftKey ? -30 : -7)
-		case "t":
-		case "T":
-		case "е":
-		case "Е":
+		case "KeyT":
 			return goToday()
-		case "1":
-			span.value = 7
+		case "Digit1":
+		case "Digit2":
+		case "Digit3":
+		case "Digit4":
+			span.value = [7, 14, 30, 60][Number(e.code.slice(-1)) - 1]
 			return load()
-		case "2":
-			span.value = 14
-			return load()
-		case "3":
-			span.value = 30
-			return load()
-		case "4":
-			span.value = 60
-			return load()
-		case "/":
-		case "f":
-		case "F":
+		case "KeyF":
 			e.preventDefault()
 			return searchEl.value?.focus?.()
-		case "?":
-			return (showHelp.value = true)
+		case "Slash":
+			e.preventDefault()
+			if (e.shiftKey) return (showHelp.value = true) // «?»
+			return searchEl.value?.focus?.()
 	}
 	if (!p || !canEdit) return
-	if (e.key === "Enter") return openPlacement(p)
-	if (e.key === "Delete" || e.key === "Backspace") return cancelBooking(p)
-	if (e.key === "e" || e.key === "E" || e.key === "у" || e.key === "У") return p.stage === "expected" && quickStage(p, "checked_in")
-	if (e.key === "o" || e.key === "O" || e.key === "щ" || e.key === "Щ") return p.stage === "checked_in" && quickStage(p, "checked_out")
-	if (e.key === "[") return nudge(p, -1)
-	if (e.key === "]") return nudge(p, 1)
+	if (e.code === "Enter" || e.code === "NumpadEnter") return openPlacement(p)
+	if (e.code === "Delete" || e.code === "Backspace") return cancelBooking(p)
+	if (e.code === "KeyE") return p.stage === "expected" && quickStage(p, "checked_in")
+	if (e.code === "KeyO") return p.stage === "checked_in" && quickStage(p, "checked_out")
+	if (e.code === "BracketLeft") return nudge(p, -1)
+	if (e.code === "BracketRight") return nudge(p, 1)
 }
 
 watch([hotelId], () => {})
@@ -678,66 +812,62 @@ const selStyle = computed(() => {
 
 <template>
 	<div class="grid">
-		<PageHeader title="Календарь броней" subtitle="Строка — спальное место, столбец — сутки, цветная лента — бронь" icon="calendar">
-			<template #actions>
-				<Button icon="info" @click="showHelp = true">Как пользоваться</Button>
-			</template>
-		</PageHeader>
-
 		<div class="toolbar">
-			<label class="tbf">
-				<span class="tbf__label">Гостиница</span>
-				<Select v-model="hotelId" style="width: auto" @change="load">
+			<div class="toolbar__row">
+				<Select v-model="hotelId" class="tb-hotel" title="Гостиница" @change="load">
 					<option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option>
 				</Select>
-			</label>
-			<label class="tbf">
-				<span class="tbf__label">Начало периода</span>
-				<DateInput v-model="from" style="width: auto" @change="load" />
-			</label>
-			<div class="tbf">
-				<span class="tbf__label">Показывать дней</span>
-				<div class="segs">
-					<button v-for="s in [7, 14, 30, 60]" :key="s" type="button" class="seg" :class="{ on: span === s }" @click="span = s; load()">{{ s }}</button>
+				<div class="tb-nav">
+					<IconButton icon="chevron-left" label="Неделя назад" @click="shiftFrom(-7)" />
+					<DateInput v-model="from" title="Начало периода" style="width: 11rem" @change="load" />
+					<IconButton icon="chevron-right" label="Неделя вперёд" @click="shiftFrom(7)" />
+					<Button @click="goToday">Сегодня</Button>
 				</div>
-			</div>
-			<label class="tbf">
-				<span class="tbf__label">Тип номера</span>
-				<Select v-model="classFilter" style="width: auto">
-					<option value="">Все типы</option>
-					<option v-for="c in classOptions" :key="c" :value="c">{{ c }}</option>
-				</Select>
-			</label>
-			<div class="tbf">
-				<span class="tbf__label">Перелистать</span>
-				<div class="nav">
-					<Button size="sm" icon="chevron-left" title="Неделя назад" @click="shiftFrom(-7)" />
-					<Button size="sm" @click="goToday">Сегодня</Button>
-					<Button size="sm" icon="chevron-right" title="Неделя вперёд" @click="shiftFrom(7)" />
-				</div>
-			</div>
-			<label class="tbf grow">
-				<span class="tbf__label">Поиск проживающего</span>
+				<SegmentedControl :model-value="span" :options="SPANS" title="Сколько дней показывать" @update:model-value="(v) => { span = v; load() }" />
+				<span class="toolbar__grow" />
 				<div class="search-wrap">
-					<Input ref="searchEl" v-model="search" placeholder="Фамилия или имя (клавиша F)" />
+					<Icon name="search" class="search-ic" />
+					<Input
+						ref="searchEl"
+						v-model="search"
+						placeholder="Найти проживающего (F)"
+						style="padding-left: 2.2rem"
+						@keydown.enter.prevent="jumpHit($event.shiftKey ? -1 : 1)"
+					/>
 					<span
 						v-if="search.trim()"
 						class="hits"
 						:class="{ none: !searchHits }"
-						:title="searchHits ? `Подсвечено броней: ${searchHits}` : 'Ничего не найдено'"
-					>{{ searchHits }}</span>
+						:title="searchHits ? 'Enter — к следующему, Shift+Enter — к предыдущему' : 'Ничего не найдено'"
+					>{{ searchHits ? (hitIdx >= 0 ? `${hitIdx + 1} из ${searchHits}` : `${searchHits} · Enter`) : "нет" }}</span>
 				</div>
-			</label>
+				<IconButton icon="info" label="Как пользоваться (?)" @click="showHelp = true" />
+			</div>
+			<div class="toolbar__row">
+				<Select v-model="classFilter" class="tb-small" title="Тип номера">
+					<option value="">Все типы номеров</option>
+					<option v-for="c in classOptions" :key="c" :value="c">{{ c }}</option>
+				</Select>
+				<Select v-if="floorOptions.length > 1" v-model="floorFilter" class="tb-small" title="Этаж">
+					<option value="">Все этажи</option>
+					<option v-for="fl in floorOptions" :key="fl" :value="fl">{{ fl }} этаж</option>
+				</Select>
+				<button type="button" class="toggle" :class="{ on: onlyFree }" title="Только номера, где в этот период есть хотя бы одна свободная ночь" @click="onlyFree = !onlyFree">
+					<Icon :name="onlyFree ? 'check' : 'plus'" size="0.9em" /> Только со свободными
+				</button>
+				<button type="button" class="toggle" :class="{ on: dense }" title="Компактные строки: больше мест на экране" @click="dense = !dense">
+					<Icon :name="dense ? 'check' : 'plus'" size="0.9em" /> Компактно
+				</button>
+				<span class="toolbar__grow" />
+				<div class="legend">
+					<span v-for="s in bookingStatuses" :key="s.id" class="leg"><StatusDot :color="s.color" /> {{ s.name }}</span>
+					<span class="leg" title="Бронь оформлена, человек ещё не заселён"><i class="sw sw-exp" /> ожидается заезд</span>
+					<span class="leg" title="Номер снят с брони на время ремонта"><i class="sw sw-repair" :style="{ '--rep': repairColor }" /> {{ repairName }}</span>
+				</div>
+			</div>
 		</div>
 
-		<div class="legend">
-			<span class="legend__title">Цвет ленты — статус брони:</span>
-			<span v-for="s in bookingStatuses" :key="s.id" class="leg"><StatusDot :color="s.color" /> {{ s.name }}</span>
-			<span class="leg" title="Бронь оформлена, человек ещё не заселён"><i class="sw sw-exp" /> ожидается заезд</span>
-			<span class="leg" title="Номер снят с брони на время ремонта"><i class="sw sw-repair" :style="{ '--rep': repairColor }" /> {{ repairName }}</span>
-		</div>
-
-		<div ref="scrollEl" class="rack" :class="{ busy }" @pointerdown="onDown" @contextmenu="onContext" @pointerleave="schedulePopHide">
+		<div ref="scrollEl" class="rack" :class="{ busy, dense }" @pointerdown="onDown" @contextmenu="onContext" @pointerleave="schedulePopHide">
 			<div class="rack-inner" :style="gridStyle">
 				<!-- шапка -->
 				<div class="head">
@@ -766,7 +896,7 @@ const selStyle = computed(() => {
 				<!-- тело -->
 				<div class="body" :style="{ height: layout.height + 'px' }">
 					<div class="rowlabels">
-						<div v-for="f in flatBeds" :key="f.bed.id" class="rowlabel" :style="{ top: f.rowIndex * rowH + 'px' }">
+						<div v-for="f in flatBeds" :key="f.bed.id" class="rowlabel" :class="{ hl: f.rowIndex === hoverRow }" :style="{ top: f.rowIndex * rowH + 'px' }">
 							<div class="num" :class="{ first: f.first }">
 								<template v-if="f.first"><b>№ {{ f.room.number }}</b><span class="cls">{{ f.room.class_name || "—" }}</span></template>
 							</div>
@@ -777,6 +907,7 @@ const selStyle = computed(() => {
 					<div class="canvas" :style="{ width: span * colW + 'px', height: layout.height + 'px' }">
 						<div v-for="(d, i) in dayInfo" :key="d.date" class="colline" :class="{ we: d.weekend }" :style="{ left: i * colW + 'px' }" />
 						<div v-for="f in flatBeds" :key="'r' + f.bed.id" class="rowline" :style="{ top: (f.rowIndex + 1) * rowH + 'px' }" />
+						<div v-if="hoverRow >= 0" class="rowhl" :style="{ top: hoverRow * rowH + 'px', height: rowH + 'px' }" />
 						<div v-if="layout.todayX != null" class="todayline" :style="{ left: layout.todayX + 'px' }" />
 
 						<div
@@ -804,9 +935,10 @@ const selStyle = computed(() => {
 								hit: r.hit,
 								sel: !r.ghost && r.id === selectedId,
 							}"
-							:style="{ top: r.row * rowH + 3 + 'px', left: r.leftPx + 'px', width: r.width + 'px', height: rowH - 6 + 'px', '--rc': r.color, color: r.text }"
+							:style="{ top: r.row * rowH + 3 + 'px', left: r.leftPx + 'px', width: r.width + 'px', height: rowH - 6 + 'px', '--rc': r.color }"
 						>
 							<span class="rlabel">{{ r.label }}</span>
+							<span v-if="r.width > 150 && !r.ghost" class="rnights">{{ r.nights }} {{ nightsWord(r.nights) }}</span>
 							<i v-if="!r.ghost && canEdit" class="grip grip-l" />
 							<i v-if="!r.ghost && canEdit" class="grip grip-r" />
 						</div>
@@ -816,6 +948,34 @@ const selStyle = computed(() => {
 				</div>
 			</div>
 		</div>
+
+		<!-- Подпись у курсора при перетаскивании: куда и на какие даты -->
+		<div v-if="ghost.active && !confirmMove.show" class="drag-tip" :class="{ bad: !ghost.ok }" :style="{ left: ghost.x + 16 + 'px', top: ghost.y + 16 + 'px' }">
+			<template v-if="ghost.ok">
+				<b>{{ range(ghost.from, ghost.to) }}</b> · {{ dayDiff(ghost.from, ghost.to) }} {{ nightsWord(dayDiff(ghost.from, ghost.to)) }}
+				<span v-if="ghost.bedId !== ghost.p?.bed_id" class="drag-tip__bed">→ {{ bedName(ghost.bedId) }}</span>
+			</template>
+			<template v-else>Занято — отпустите в другом месте</template>
+		</div>
+
+		<!-- Подтверждение переноса -->
+		<template v-if="confirmMove.show && ghost.p">
+			<div class="confirm-catch" @pointerdown="cancelMove" />
+			<div class="confirm-move" :style="confirmStyle" role="dialog" aria-label="Подтверждение переноса">
+				<div class="confirm-move__title">{{ ghost.bedId !== ghost.p.bed_id ? "Перенести бронь?" : "Изменить даты?" }}</div>
+				<div class="confirm-move__who">{{ ghost.p.resident_name || ghost.p.status_name }}</div>
+				<div v-if="ghost.bedId !== ghost.p.bed_id" class="confirm-move__row">
+					<span class="muted">Место</span><s>{{ bedName(ghost.p.bed_id) }}</s><Icon name="arrow-right" size="0.8em" /><b>{{ bedName(ghost.bedId) }}</b>
+				</div>
+				<div v-if="ghost.from !== ghost.p.date_from || ghost.to !== ghost.p.date_to" class="confirm-move__row">
+					<span class="muted">Даты</span><s>{{ range(ghost.p.date_from, ghost.p.date_to) }}</s><Icon name="arrow-right" size="0.8em" /><b>{{ range(ghost.from, ghost.to) }}</b>
+				</div>
+				<div class="confirm-move__acts">
+					<Button variant="ghost" size="sm" @click="cancelMove">Отмена <kbd>Esc</kbd></Button>
+					<Button variant="primary" size="sm" icon="check" @click="applyMove">Применить <kbd>Enter</kbd></Button>
+				</div>
+			</div>
+		</template>
 
 		<!-- поповер -->
 		<div v-if="pop.show && pop.p" class="pop" :class="{ above: pop.above }" :style="{ left: pop.x + 'px', top: pop.y + 'px' }" @pointerenter="keepPopover" @pointerleave="schedulePopHide">
@@ -883,21 +1043,22 @@ const selStyle = computed(() => {
 				она начинается в день заезда и заканчивается в день выезда. В день выезда место уже свободно —
 				в него можно селить следующего вахтовика (пересменка).
 			</p>
+			<p class="help-intro muted">Клавиши работают в любой раскладке — переключать на английский не нужно.</p>
 			<div class="keys">
 				<div class="kgroup">
 					<h4>Навигация</h4>
 					<div class="krow"><kbd>←</kbd><kbd>→</kbd><span>неделя назад / вперёд</span></div>
 					<div class="krow"><kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd><span>месяц</span></div>
-					<div class="krow"><kbd>T</kbd><span>к сегодняшнему дню</span></div>
+					<div class="krow"><kbd>T · Е</kbd><span>к сегодняшнему дню</span></div>
 					<div class="krow"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><span>период 7 / 14 / 30 / 60 дней</span></div>
-					<div class="krow"><kbd>F</kbd><span>поиск проживающего</span></div>
+					<div class="krow"><kbd>F · А</kbd><span>поиск проживающего</span></div>
 				</div>
 				<div class="kgroup">
 					<h4>Бронь (выберите ленту кликом)</h4>
 					<div class="krow"><kbd>Enter</kbd><span>открыть карточку</span></div>
-					<div class="krow"><kbd>E</kbd><span>заселить</span></div>
-					<div class="krow"><kbd>O</kbd><span>выселить</span></div>
-					<div class="krow"><kbd>[</kbd><kbd>]</kbd><span>сдвинуть на день</span></div>
+					<div class="krow"><kbd>E · У</kbd><span>заселить</span></div>
+					<div class="krow"><kbd>O · Щ</kbd><span>выселить</span></div>
+					<div class="krow"><kbd>[ · Х</kbd><kbd>] · Ъ</kbd><span>сдвинуть на день</span></div>
 					<div class="krow"><kbd>Del</kbd><span>отменить бронь</span></div>
 					<div class="krow"><kbd>Esc</kbd><span>снять выделение</span></div>
 				</div>
@@ -905,8 +1066,8 @@ const selStyle = computed(() => {
 					<h4>Мышь</h4>
 					<div class="krow"><span class="gesture">Протяжка по пустым клеткам</span><span>бронь или ремонт — на выбор</span></div>
 					<div class="krow"><span class="gesture">Клик по полосе ремонта</span><span>снять ремонт</span></div>
-					<div class="krow"><span class="gesture">Тянуть ленту</span><span>перенос на другое место и даты</span></div>
-					<div class="krow"><span class="gesture">Тянуть за край ленты</span><span>продлить / сократить</span></div>
+					<div class="krow"><span class="gesture">Тянуть ленту</span><span>перенос — с подтверждением, отмена Ctrl+Z</span></div>
+					<div class="krow"><span class="gesture">Выбрать ленту, тянуть за край</span><span>продлить / сократить</span></div>
 					<div class="krow"><span class="gesture">Правый клик</span><span>меню действий</span></div>
 					<div class="krow"><span class="gesture">Тянуть фон / средняя кнопка</span><span>прокрутка</span></div>
 				</div>
@@ -918,59 +1079,72 @@ const selStyle = computed(() => {
 </template>
 
 <style scoped>
+/* Тулбар: все контролы одной высоты (--control-h-md), подписи — в title/placeholder,
+   чтобы ряд не «прыгал» от подписей разной высоты */
 .toolbar {
+	display: grid;
+	gap: var(--gap-sm);
+}
+.toolbar__row {
 	display: flex;
-	align-items: flex-end;
+	align-items: center;
 	gap: var(--gap-sm);
 	flex-wrap: wrap;
 }
-/* Подпись над каждым фильтром: без неё непонятно, что значит дата и «30» */
-.tbf {
-	display: flex;
-	flex-direction: column;
-	gap: 3px;
-}
-.tbf.grow {
+.toolbar__grow {
 	flex: 1;
-	min-width: 200px;
-	max-width: 340px;
 }
-.tbf__label {
-	font-size: var(--font-size-xs);
-	color: var(--color-secondary);
-	white-space: nowrap;
+.tb-hotel {
+	width: auto;
+	max-width: 22rem;
+	font-weight: var(--font-weight-bold);
 }
-.segs {
+.tb-small {
+	width: auto;
+}
+.tb-nav {
 	display: inline-flex;
-	gap: 2px;
-	padding: 3px;
-	background: var(--color-bg);
-	border: 1px solid var(--color-divider);
-	border-radius: var(--radius-md);
+	align-items: center;
+	gap: 4px;
 }
-.seg {
-	padding: 4px var(--gap-sm);
+.toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: var(--control-h-md);
+	padding: 0 var(--gap-md);
+	border: 1px solid var(--color-button-border);
+	border-radius: var(--radius-md);
+	background: transparent;
+	color: var(--color-secondary);
 	font: inherit;
 	font-size: var(--font-size-sm);
-	font-weight: 700;
+	font-weight: var(--font-weight-bold);
 	cursor: pointer;
-	color: var(--color-secondary);
-	background: transparent;
-	border: none;
-	border-radius: var(--radius-sm);
+	white-space: nowrap;
 }
-.seg.on {
+.toggle:hover {
+	color: var(--color-contrast);
+	border-color: var(--color-brand);
+}
+.toggle.on {
 	background: var(--color-brand-highlight);
+	border-color: var(--color-brand);
 	color: var(--color-brand);
-}
-.nav {
-	display: inline-flex;
-	gap: var(--gap-xs);
 }
 .search-wrap {
 	position: relative;
-	flex: 1;
-	min-width: 180px;
+	width: 17rem;
+	max-width: 100%;
+}
+.search-ic {
+	position: absolute;
+	left: 0.8rem;
+	top: 50%;
+	transform: translateY(-50%);
+	color: var(--color-secondary);
+	pointer-events: none;
+	z-index: 1;
 }
 .hits {
 	position: absolute;
@@ -1273,11 +1447,18 @@ const selStyle = computed(() => {
 	z-index: 2;
 	display: flex;
 	align-items: center;
-	padding: 0 8px;
-	background: var(--rc);
-	border-radius: 3px;
+	gap: 6px;
+	padding: 0 10px;
+	/* Цвет статуса — в обводке и полосе слева, заливка приглушённая: при сотнях
+	   лент сплошной ярко-зелёный слепит и забивает текст */
+	background: color-mix(in srgb, var(--rc) 26%, var(--color-raised-bg));
+	border: 1px solid color-mix(in srgb, var(--rc) 70%, transparent);
+	box-shadow: inset 3px 0 0 var(--rc);
+	color: var(--color-contrast);
+	border-radius: 4px;
 	font-size: 11px;
 	font-weight: 700;
+	transition: background var(--speed-fast);
 	white-space: nowrap;
 	overflow: hidden;
 	cursor: grab;
@@ -1290,8 +1471,129 @@ const selStyle = computed(() => {
 	border-top-right-radius: 999px;
 	border-bottom-right-radius: 999px;
 }
+.ribbon:hover {
+	background: color-mix(in srgb, var(--rc) 38%, var(--color-raised-bg));
+}
 .ribbon.exp {
-	background: repeating-linear-gradient(45deg, var(--rc) 0 6px, color-mix(in srgb, var(--rc) 55%, #000) 6px 12px);
+	background: repeating-linear-gradient(
+		45deg,
+		color-mix(in srgb, var(--rc) 26%, var(--color-raised-bg)) 0 6px,
+		color-mix(in srgb, var(--rc) 10%, var(--color-raised-bg)) 6px 12px
+	);
+	border-style: dashed;
+}
+/* Края для растягивания — только у выбранной ленты */
+.ribbon:not(.sel) .grip {
+	display: none;
+}
+.ribbon:not(.sel) {
+	cursor: pointer;
+}
+.drag-tip {
+	position: fixed;
+	z-index: calc(var(--z-popover) + 5);
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	border-radius: var(--radius-md);
+	background: var(--color-super-raised-bg);
+	border: 1px solid var(--color-brand);
+	box-shadow: var(--shadow-floating);
+	color: var(--color-base);
+	font-size: var(--font-size-xs);
+	white-space: nowrap;
+	pointer-events: none;
+}
+.drag-tip b {
+	color: var(--color-contrast);
+}
+.drag-tip.bad {
+	border-color: var(--color-red);
+	color: var(--color-red);
+}
+.drag-tip__bed {
+	color: var(--color-brand);
+	font-weight: var(--font-weight-bold);
+}
+.confirm-catch {
+	position: fixed;
+	inset: 0;
+	z-index: calc(var(--z-popover) + 5);
+}
+.confirm-move {
+	position: fixed;
+	z-index: calc(var(--z-popover) + 6);
+	width: 320px;
+	display: grid;
+	gap: 6px;
+	padding: var(--gap-md) var(--gap-lg);
+	border-radius: var(--radius-lg);
+	background: var(--color-super-raised-bg);
+	border: 1px solid var(--color-divider);
+	box-shadow: var(--shadow-floating), 0 18px 40px rgba(0, 0, 0, 0.35);
+	font-size: var(--font-size-sm);
+	animation: k-pop-in 140ms ease;
+}
+@keyframes k-pop-in {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+}
+.confirm-move__title {
+	font-weight: var(--font-weight-bold);
+	color: var(--color-contrast);
+}
+.confirm-move__who {
+	color: var(--color-secondary);
+	margin-top: -4px;
+}
+.confirm-move__row {
+	display: grid;
+	grid-template-columns: 3.2rem auto auto 1fr;
+	align-items: center;
+	gap: 6px;
+	font-size: var(--font-size-xs);
+}
+.confirm-move__row s {
+	color: var(--color-secondary);
+}
+.confirm-move__row b {
+	color: var(--color-contrast);
+}
+.confirm-move__acts {
+	display: flex;
+	justify-content: flex-end;
+	gap: 6px;
+	margin-top: 4px;
+}
+.confirm-move__acts kbd {
+	font-size: 0.65rem;
+	opacity: 0.7;
+	margin-left: 4px;
+}
+.rnights {
+	margin-left: auto;
+	font-weight: 500;
+	opacity: 0.7;
+	flex-shrink: 0;
+}
+.rack.dense .cls {
+	display: none;
+}
+.rack.dense .ribbon {
+	font-size: 10px;
+}
+.rowhl {
+	position: absolute;
+	left: 0;
+	right: 0;
+	background: color-mix(in srgb, var(--color-brand) 8%, transparent);
+	pointer-events: none;
+}
+.rowlabel.hl {
+	background: color-mix(in srgb, var(--color-brand) 10%, var(--color-raised-bg));
 }
 .ribbon.out {
 	opacity: 0.55;

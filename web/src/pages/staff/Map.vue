@@ -4,7 +4,7 @@ import { useRouter } from "vue-router"
 import { api } from "@/api/client"
 import MapView from "@/components/MapView.vue"
 import Icon from "@/components/Icon.vue"
-import { PageHeader, Card, Chip, StatusDot, Skeleton, EmptyState, Button, Input, SegmentedControl } from "@/ui"
+import { PageHeader, Card, Chip, StatusDot, Skeleton, EmptyState, Button, Input, Select, SegmentedControl } from "@/ui"
 
 const router = useRouter()
 const rows = ref([])
@@ -12,6 +12,7 @@ const loading = ref(true)
 const selectedId = ref(null)
 const q = ref("")
 const filter = ref("all")
+const sort = ref("free")
 
 async function load() {
 	loading.value = true
@@ -47,15 +48,27 @@ const filterOptions = computed(() => [
 	{ value: "full", label: "Заняты", count: rows.value.filter((r) => r.beds && r.free === 0).length },
 ])
 
+const SORTS = {
+	free: (a, b) => b.free - a.free,
+	load: (a, b) => b.occupancy - a.occupancy,
+	name: (a, b) => a.name.localeCompare(b.name, "ru"),
+}
 const visible = computed(() => {
 	const term = q.value.trim().toLowerCase()
-	return rows.value.filter((r) => {
-		if (filter.value === "free" && !(r.free > 0)) return false
-		if (filter.value === "full" && !(r.beds && r.free === 0)) return false
-		if (!term) return true
-		return [r.name, r.settlement, r.address].filter(Boolean).some((v) => v.toLowerCase().includes(term))
-	})
+	return rows.value
+		.filter((r) => {
+			if (filter.value === "free" && !(r.free > 0)) return false
+			if (filter.value === "full" && !(r.beds && r.free === 0)) return false
+			if (!term) return true
+			return [r.name, r.settlement, r.address].filter(Boolean).some((v) => v.toLowerCase().includes(term))
+		})
+		.sort(SORTS[sort.value])
 })
+// Короткая подпись на карте: «Вахтовый посёлок «Хиагда», корпус 1» → «корпус 1»
+const shortName = (n) => {
+	const tail = n.split(",").pop().trim()
+	return (tail.length >= 4 ? tail : n).slice(0, 26)
+}
 
 const withCoords = computed(() => visible.value.filter((r) => r.latitude != null && r.longitude != null))
 const missing = computed(() => rows.value.filter((r) => r.latitude == null || r.longitude == null))
@@ -75,11 +88,9 @@ const markers = computed(() =>
 		lng: r.longitude,
 		color: colorOf(r),
 		badge: r.free,
+		label: shortName(r.name),
+		// Подробности — в карточке справа, попап их только дублировал и закрывал соседей
 		title: `${r.name} — свободно ${r.free} из ${r.beds}`,
-		html: `<b>${r.name}</b><br>${r.settlement || r.address || "Без адреса"}<br>
-			Свободно <b>${r.free}</b> из ${r.beds} · занято ${r.occupancy}%
-			${r.arrivals ? `<br>Заезды сегодня: ${r.arrivals}` : ""}
-			${r.repair ? `<br>Номеров на ремонте: ${r.repair}` : ""}`,
 	})),
 )
 
@@ -109,6 +120,11 @@ function openRack(row) {
 			<div class="toolbar">
 				<SegmentedControl v-model="filter" :options="filterOptions" />
 				<Input v-model="q" placeholder="Поиск по названию или посёлку…" class="search" />
+				<Select v-model="sort" style="width: auto" title="Порядок в списке">
+					<option value="free">Больше свободных</option>
+					<option value="load">Загруженнее</option>
+					<option value="name">По названию</option>
+				</Select>
 				<div class="legend">
 					<span class="leg"><StatusDot color="#1bd96a" /> есть места</span>
 					<span class="leg"><StatusDot color="#ffa347" /> мало</span>
@@ -122,7 +138,8 @@ function openRack(row) {
 						v-if="withCoords.length"
 						:markers="markers"
 						:selected-id="selectedId"
-						height="560px"
+						cluster
+						height="max(440px, calc(100vh - 330px))"
 						@select="selectedId = $event"
 					/>
 					<EmptyState v-else icon="map-pin" title="Нечего показать" text="Ни одна из подходящих гостиниц не имеет координат." />
@@ -321,7 +338,8 @@ function openRack(row) {
 .list {
 	display: grid;
 	gap: var(--gap-xs);
-	max-height: 420px;
+	max-height: calc(100vh - 640px);
+	min-height: 180px;
 	overflow: auto;
 	padding-right: 2px;
 }

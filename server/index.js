@@ -1423,11 +1423,12 @@ api.get("/statuses", async (_req, res) =>
 api.post("/statuses", requireRole("editor"), async (req, res) => {
 	const { name, color, sort } = req.body || {}
 	if (!name || !color) return res.status(400).json({ error: "Укажите название и цвет" })
+	const stage = STAGES.includes(req.body?.stage) ? req.body.stage : null
 	try {
-		const info = await db.prepare("INSERT INTO statuses (name, color, sort, kind) VALUES (?,?,?,'booking')").run(name, color, sort || 0)
+		const info = await db.prepare("INSERT INTO statuses (name, color, sort, kind, stage) VALUES (?,?,?,'booking',?)").run(name, color, sort || 0, stage)
 		res.json({ id: info.lastInsertRowid })
 	} catch {
-		res.status(400).json({ error: "Такой статус уже есть" })
+		res.status(400).json({ error: stage ? "Такой статус уже есть, или стадия уже привязана к другому статусу" : "Такой статус уже есть" })
 	}
 })
 api.put("/statuses/:id", requireRole("editor"), async (req, res) => {
@@ -1435,6 +1436,14 @@ api.put("/statuses/:id", requireRole("editor"), async (req, res) => {
 	if (!name || !color) return res.status(400).json({ error: "Укажите название и цвет" })
 	// Системным состояниям можно поменять подпись и цвет, но не превратить их в статус брони
 	await db.prepare("UPDATE statuses SET name = ?, color = ?, sort = ? WHERE id = ?").run(name, color, sort || 0, req.params.id)
+	// Привязка к стадии: у одной стадии — один статус, старую привязку снимаем
+	if (req.body && "stage" in req.body && !(await systemStatus(req.params.id))) {
+		const stage = STAGES.includes(req.body.stage) ? req.body.stage : null
+		await db.tx(async (t) => {
+			if (stage) await t.prepare("UPDATE statuses SET stage = NULL WHERE stage = ? AND id <> ?").run(stage, req.params.id)
+			await t.prepare("UPDATE statuses SET stage = ? WHERE id = ?").run(stage, req.params.id)
+		})
+	}
 	res.json({ ok: true })
 })
 api.delete("/statuses/:id", requireRole("admin"), async (req, res) => {
@@ -1813,9 +1822,27 @@ async function findBlock(bedId, from, to) {
 		.get(bedId, to, from)
 }
 
+// Статус, привязанный к стадии (цвет ленты). Нет привязки — null.
+const statusForStage = async (stage) => (await db.prepare("SELECT id FROM statuses WHERE stage = ?").get(stage))?.id ?? null
+// Какой статус поставить брони: свой (метка без привязки к стадии) — оставляем,
+// иначе берём привязанный к стадии; нет и его — первый статус брони.
+async function resolveStatus(statusId, stage) {
+	if (statusId) {
+		const s = await db.prepare("SELECT stage, kind FROM statuses WHERE id = ?").get(statusId)
+		if (s && s.kind === "booking" && !s.stage) return statusId
+	}
+	return (
+		(await statusForStage(stage)) ||
+		statusId ||
+		(await db.prepare("SELECT id FROM statuses WHERE kind = 'booking' ORDER BY sort, id LIMIT 1").get())?.id ||
+		null
+	)
+}
+
 api.post("/placements", requireRole("editor"), async (req, res) => {
-	const { bed_id, resident_id, status_id, date_from, date_to, comment } = req.body || {}
+	const { bed_id, resident_id, date_from, date_to, comment } = req.body || {}
 	const stage = req.body?.stage || "expected"
+	const status_id = await resolveStatus(req.body?.status_id, stage)
 	if (stage !== "cancelled" && !resident_id) return res.status(400).json({ error: "Выберите или создайте профиль вахтовика" })
 	if (resident_id && !await db.prepare("SELECT id FROM residents WHERE id = ?").get(resident_id)) {
 		return res.status(400).json({ error: "Профиль вахтовика не найден" })
@@ -1844,8 +1871,8 @@ api.post("/placements", requireRole("editor"), async (req, res) => {
 	res.json({ id: info.lastInsertRowid })
 })
 api.put("/placements/:id", requireRole("editor"), async (req, res) => {
-	const { resident_id, status_id, date_from, date_to, comment } = req.body || {}
-	if (!status_id || !date_from || !date_to) return res.status(400).json({ error: "Заполните статус и даты" })
+	const { resident_id, date_from, date_to, comment } = req.body || {}
+	if (!date_from || !date_to) return res.status(400).json({ error: "Заполните даты" })
 	if (!(nights(date_from, date_to) >= 1)) return res.status(400).json({ error: "Выезд должен быть позже заезда: бронь — минимум одна ночь" })
 	const current = await db.prepare("SELECT bed_id, stage FROM placements WHERE id = ?").get(req.params.id)
 	if (!current) return res.status(404).json({ error: "Размещение не найдено" })
@@ -1860,11 +1887,13 @@ api.put("/placements/:id", requireRole("editor"), async (req, res) => {
 		return res.status(400).json({ error: "Профиль вахтовика не найден" })
 	}
 	if (!STAGES.includes(stage)) return res.status(400).json({ error: "Неизвестная стадия брони" })
+	const status_id = await resolveStatus(req.body?.status_id, stage)
+	if (!status_id) return res.status(400).json({ error: "Нет ни одного статуса брони — заведите его в справочниках" })
 	const sysUpd = await systemStatus(status_id)
 	if (sysUpd) return res.status(400).json({ error: systemStatusError(sysUpd) })
-	if (!canTransition(current.stage, stage)) {
-		return res.status(409).json({ error: "Недопустимый переход стадии брони" })
-	}
+	// В карточке брони состояние выбирают осознанно — разрешаем любое (например, внести
+	// задним числом «Выехал» или вернуть ошибочно отменённую). Быстрые кнопки в шахматке
+	// идут через /stage и там переходы по-прежнему строгие.
 	const conflict = await findConflict(bedId, date_from, date_to, req.params.id)
 	if (conflict) {
 		return res.status(409).json({
@@ -1896,7 +1925,10 @@ api.post("/placements/:id/stage", requireRole("editor"), async (req, res) => {
 	if (!canTransition(current.stage, stage)) {
 		return res.status(409).json({ error: "Недопустимый переход стадии брони" })
 	}
-	await db.prepare("UPDATE placements SET stage = ? WHERE id = ?").run(stage, req.params.id)
+	// Вместе со стадией меняется и цвет, если у брони стандартный (привязанный) статус
+	const cur = await db.prepare("SELECT status_id FROM placements WHERE id = ?").get(req.params.id)
+	const statusId = await resolveStatus(cur.status_id, stage)
+	await db.prepare("UPDATE placements SET stage = ?, status_id = ? WHERE id = ?").run(stage, statusId, req.params.id)
 	broadcastToStaff("rack:changed", { hotelId: await roomHotelId(current.room_id) })
 	res.json({ ok: true })
 })

@@ -391,6 +391,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_users_resident ON users(resident_id) WHERE 
 // Идемпотентны: на свежей базе не делают ничего.
 const PATCHES = `
 ALTER TABLE residents ADD COLUMN IF NOT EXISTS department TEXT;
+-- Статус (цвет ленты) привязывается к стадии брони: сменили стадию — сменился цвет.
+-- Раньше это были два независимых поля, и «Заселить» оставляло ленту цвета «Забронировано».
+ALTER TABLE statuses ADD COLUMN IF NOT EXISTS stage TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_statuses_stage ON statuses(stage) WHERE stage IS NOT NULL;
+UPDATE statuses SET stage = 'expected'
+ WHERE id = (SELECT MIN(id) FROM statuses WHERE kind = 'booking' AND stage IS NULL AND name ILIKE '%брон%')
+   AND NOT EXISTS (SELECT 1 FROM statuses WHERE stage = 'expected');
+UPDATE statuses SET stage = 'checked_in'
+ WHERE id = (SELECT MIN(id) FROM statuses WHERE kind = 'booking' AND stage IS NULL AND name ILIKE '%рожива%')
+   AND NOT EXISTS (SELECT 1 FROM statuses WHERE stage = 'checked_in');
 `
 
 const SYSTEM_STATUSES = `

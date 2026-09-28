@@ -41,7 +41,8 @@ const paletteActions = computed(() => [
 // Ctrl+K / ⌘K — в любом месте; «/» — когда фокус не в поле ввода
 function onGlobalKey(e) {
 	const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable
-	if (((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "л")) || (e.key === "/" && !typing)) {
+	// e.code — физическая клавиша, работает и в русской раскладке (К/Л, «.»)
+	if (((e.ctrlKey || e.metaKey) && e.code === "KeyK") || (e.code === "Slash" && !e.shiftKey && !e.ctrlKey && !typing)) {
 		e.preventDefault()
 		paletteOpen.value = !paletteOpen.value
 	}

@@ -2,7 +2,7 @@
 // Бронирование: календарь броней и поиск свободных мест в одном разделе (переключение вкладками).
 import { ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
-import { Tabs } from "@/ui"
+import { Tabs, PageHeader } from "@/ui"
 import Rack from "@/pages/staff/Rack.vue"
 import Availability from "@/pages/staff/Availability.vue"
 
@@ -26,6 +26,15 @@ watch(tab, (v) => {
 
 <template>
 	<div class="grid">
+		<PageHeader
+			title="Бронирование"
+			icon="calendar"
+			:subtitle="
+				tab === 'calendar'
+					? 'Строка — спальное место, столбец — сутки. Протяните по пустым клеткам, чтобы заселить'
+					: 'Места, свободные все ночи периода, — чтобы сразу заселить вахту'
+			"
+		/>
 		<Tabs v-model="tab" :options="options" />
 		<Rack v-if="tab === 'calendar'" />
 		<Availability v-else />

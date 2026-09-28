@@ -23,12 +23,17 @@ defineProps({ options: { type: Array, default: () => [] } })
 <style scoped>
 .k-seg {
 	display: inline-flex;
+	align-items: stretch;
 	gap: 2px;
+	height: var(--control-h-md);
 	padding: 3px;
+	max-width: 100%;
+	overflow-x: auto;
+	scrollbar-width: none;
 	background: var(--color-bg);
 	border: 1px solid var(--color-divider);
 	border-radius: var(--radius-md);
-	flex-wrap: wrap;
+	flex-shrink: 0;
 }
 .k-seg__btn {
 	display: inline-flex;
@@ -40,9 +45,13 @@ defineProps({ options: { type: Array, default: () => [] } })
 	font: inherit;
 	font-weight: var(--font-weight-bold);
 	font-size: var(--font-size-sm);
-	padding: var(--gap-xs) var(--gap-md);
+	padding: 0 var(--gap-md);
 	border-radius: var(--radius-sm);
 	cursor: pointer;
+	white-space: nowrap;
+}
+.k-seg__btn:hover:not(.on) {
+	color: var(--color-contrast);
 }
 .k-seg__btn.on {
 	background: var(--color-brand-highlight);

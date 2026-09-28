@@ -11,7 +11,7 @@
 <style scoped>
 .k-filterbar {
 	display: flex;
-	align-items: center;
+	align-items: flex-end;
 	gap: var(--gap-sm);
 	flex-wrap: wrap;
 }

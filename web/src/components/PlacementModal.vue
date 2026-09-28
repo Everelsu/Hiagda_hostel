@@ -14,8 +14,8 @@ const props = defineProps({
 })
 const emit = defineEmits(["saved", "close"])
 
-const STAGES = { expected: "Ожидается", checked_in: "Проживает", checked_out: "Выехал", cancelled: "Отменён" }
-const STAGE_NEXT = { expected: ["checked_in", "cancelled"], checked_in: ["checked_out", "cancelled"], checked_out: ["checked_in"], cancelled: ["expected"] }
+const STAGES = { expected: "Ожидается заезд", checked_in: "Проживает", checked_out: "Выехал", cancelled: "Отменена" }
+const STAGE_COLOR = { expected: "var(--color-blue)", checked_in: "var(--color-green)", checked_out: "var(--color-gray)", cancelled: "var(--color-red)" }
 
 const statuses = ref([])
 const selected = ref(props.existing?.resident_id ? { id: props.existing.resident_id, full_name: props.existing.resident_name } : null)
@@ -28,12 +28,16 @@ const dateFrom = ref(props.existing?.date_from || props.date)
 // Раньше сюда попадала та же дата, и сохранялась бронь «на ноль ночей» — невидимая в календаре.
 const dateTo = ref(props.existing?.date_to || props.dateTo || addDays(props.date, 1))
 const comment = ref(props.existing?.comment || "")
+// Своя метка (статус без привязки к стадии), например «Командировка». "" — цвет по состоянию
+const label = ref("")
+const customLabels = computed(() => statuses.value.filter((s) => !s.stage))
 const busy = ref(false)
 
 const nights = computed(() => nightsBetween(dateFrom.value, dateTo.value))
 const nightsLabel = computed(() => (nights.value < 1 ? "выезд должен быть позже заезда" : `${nights.value} ${nightsWord(nights.value)}`))
 
-const stageOptions = computed(() => (props.existing ? [stage.value, ...(STAGE_NEXT[props.existing.stage] || [])] : ["expected", "checked_in"]))
+// Все состояния сразу — без «тыкать и перетыкивать». Новую бронь отменённой не создают.
+const stageOptions = computed(() => (props.existing ? ["expected", "checked_in", "checked_out", "cancelled"] : ["expected", "checked_in", "checked_out"]))
 const canCreate = computed(() => {
 	const q = query.value.trim()
 	return q.length >= 2 && !suggestions.value.some((s) => s.full_name.trim().toLowerCase() === q.toLowerCase())
@@ -42,7 +46,9 @@ const canCreate = computed(() => {
 onMounted(async () => {
 	// Только статусы брони: «Свободно» и «Ремонт» — производные состояния, их не назначают человеку
 	statuses.value = (await api("/statuses")).filter((s) => s.kind !== "system")
-	if (!statusId.value || !statuses.value.some((s) => s.id === statusId.value)) statusId.value = statuses.value[0]?.id
+	// Статус со стадией подбирается сам; выбор оставляем только для своих меток без стадии
+	const own = statuses.value.find((s) => s.id === statusId.value)
+	label.value = own && !own.stage ? own.id : ""
 	// подтянуть детали уже привязанного профиля (табельный, организация, доступ)
 	if (selected.value?.id) {
 		try {
@@ -94,7 +100,8 @@ async function save() {
 	const payload = {
 		bed_id: props.bed.id,
 		resident_id: selected.value?.id || props.existing?.resident_id || null,
-		status_id: Number(statusId.value),
+		// Без своей метки сервер сам берёт статус, привязанный к состоянию
+		status_id: label.value ? Number(label.value) : null,
 		stage: stage.value,
 		date_from: dateFrom.value,
 		date_to: dateTo.value,
@@ -150,10 +157,27 @@ async function remove() {
 		<p class="nights" :class="{ bad: !(nights >= 1) }">
 			{{ nightsLabel }}<template v-if="nights >= 1"> · в день выезда место освобождается и уже доступно следующему</template>
 		</p>
-		<div class="two">
-			<Field label="Статус"><Select v-model="statusId"><option v-for="s in statuses" :key="s.id" :value="s.id">{{ s.name }}</option></Select></Field>
-			<Field label="Стадия брони"><Select v-model="stage"><option v-for="v in stageOptions" :key="v" :value="v">{{ STAGES[v] }}</option></Select></Field>
-		</div>
+		<Field label="Состояние">
+			<div class="stages">
+				<button
+					v-for="v in stageOptions"
+					:key="v"
+					type="button"
+					class="stage"
+					:class="{ on: stage === v }"
+					:style="{ '--sc': STAGE_COLOR[v] }"
+					@click="stage = v"
+				>
+					<span class="stage__dot" />{{ STAGES[v] }}
+				</button>
+			</div>
+		</Field>
+		<Field v-if="customLabels.length" label="Особая метка" hint="Необязательно. Без метки цвет ленты — по состоянию">
+			<Select v-model="label">
+				<option value="">— нет —</option>
+				<option v-for="s in customLabels" :key="s.id" :value="s.id">{{ s.name }}</option>
+			</Select>
+		</Field>
 		<Field label="Комментарий"><Textarea v-model="comment" :rows="2" /></Field>
 
 		<template #foot>
@@ -165,6 +189,40 @@ async function remove() {
 </template>
 
 <style scoped>
+.stages {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.stage {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	height: var(--control-h-md);
+	padding: 0 var(--gap-md);
+	border: 1px solid var(--color-button-border);
+	border-radius: var(--radius-md);
+	background: var(--color-bg);
+	color: var(--color-base);
+	font: inherit;
+	font-size: var(--font-size-sm);
+	font-weight: var(--font-weight-bold);
+	cursor: pointer;
+}
+.stage:hover {
+	border-color: var(--sc);
+}
+.stage.on {
+	border-color: var(--sc);
+	background: color-mix(in srgb, var(--sc) 16%, var(--color-bg));
+	color: var(--color-contrast);
+}
+.stage__dot {
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: var(--sc);
+}
 .two {
 	display: grid;
 	grid-template-columns: 1fr 1fr;

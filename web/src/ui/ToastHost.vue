@@ -1,5 +1,5 @@
 <script setup>
-import { toasts } from "@/toast"
+import { toasts, dismissToast } from "@/toast"
 import Icon from "@/components/Icon.vue"
 
 const ICON = { success: "check", error: "x", info: "info" }
@@ -12,6 +12,7 @@ const ICON = { success: "check", error: "x", info: "info" }
 				<div v-for="t in toasts" :key="t.id" class="k-toast" :class="`k-toast--${t.variant || 'info'}`">
 					<Icon :name="ICON[t.variant] || 'info'" class="k-toast__ico" />
 					<span>{{ t.message }}</span>
+					<button v-if="t.action" type="button" class="k-toast__act" @click="dismissToast(t.id); t.action.run()">{{ t.action.label }}</button>
 				</div>
 			</TransitionGroup>
 		</div>
@@ -19,6 +20,19 @@ const ICON = { success: "check", error: "x", info: "info" }
 </template>
 
 <style scoped>
+.k-toast__act {
+	margin-left: var(--gap-sm);
+	padding: 4px 10px;
+	border: 1px solid var(--color-brand);
+	border-radius: var(--radius-sm);
+	background: var(--color-brand-highlight);
+	color: var(--color-brand);
+	font: inherit;
+	font-size: var(--font-size-sm);
+	font-weight: var(--font-weight-bold);
+	cursor: pointer;
+	pointer-events: auto;
+}
 .k-toasts {
 	position: fixed;
 	bottom: var(--gap-xl);

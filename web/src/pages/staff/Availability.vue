@@ -5,7 +5,7 @@ import { today, addDays, nightsBetween, nightsWord, dm } from "@/utils/date"
 import { useAuthStore } from "@/stores/auth"
 import PlacementModal from "@/components/PlacementModal.vue"
 import Icon from "@/components/Icon.vue"
-import { PageHeader, FilterBar, Field, Input, Select, Button, Stat, Card, EmptyState, DateRange } from "@/ui"
+import { FilterBar, Field, Input, Select, Button, Stat, Card, EmptyState, DateRange } from "@/ui"
 
 const auth = useAuthStore()
 const canEdit = auth.can("editor")
@@ -50,7 +50,6 @@ function onSaved() {
 
 <template>
 	<div class="grid">
-		<PageHeader title="Свободные места" subtitle="Какие места свободны все ночи выбранного периода — чтобы сразу заселить вахту" icon="search" />
 
 		<FilterBar>
 			<Field label="Заезд — выезд"><DateRange v-model:from="from" v-model:to="to" style="min-width: 17rem" @change="search" /></Field>

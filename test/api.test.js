@@ -584,3 +584,30 @@ test("импорт выгрузки: предпросмотр ничего не 
 	assert.equal(again.imported, 0, "повторная выгрузка не создаёт дублей")
 	assert.equal(again.same, 2)
 })
+
+test("статус следует за стадией: «Заселить» перекрашивает бронь, своя метка сохраняется", async () => {
+	const mk = async (name, stage) => (await call("POST", "/statuses", { token: adminToken, body: { name, color: "#123456", stage } })).json.id
+	const booked = await mk("Бронь (тест)", "expected")
+	const living = await mk("Заселён (тест)", "checked_in")
+	const special = await mk("Командировка (тест)", null)
+
+	// Статус не передан — берётся привязанный к стадии
+	const p = await call("POST", "/placements", {
+		token: adminToken,
+		body: { bed_id: bedId, resident_id: residentId, date_from: "2029-01-01", date_to: "2029-01-05" },
+	})
+	assert.equal(p.status, 200)
+	const statusOf = async (id) => (await call("GET", "/placements", { token: adminToken })).json.find((x) => x.id === id)?.status_id
+	assert.equal(await statusOf(p.json.id), booked)
+
+	await call("POST", `/placements/${p.json.id}/stage`, { token: adminToken, body: { stage: "checked_in" } })
+	assert.equal(await statusOf(p.json.id), living, "заселение меняет и цвет")
+
+	// Особая метка не затирается сменой стадии
+	const q = await call("POST", "/placements", {
+		token: adminToken,
+		body: { bed_id: bedId, resident_id: residentId, status_id: special, date_from: "2029-02-01", date_to: "2029-02-05" },
+	})
+	await call("POST", `/placements/${q.json.id}/stage`, { token: adminToken, body: { stage: "checked_in" } })
+	assert.equal(await statusOf(q.json.id), special)
+})

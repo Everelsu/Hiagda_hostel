@@ -44,6 +44,8 @@ const SCOPE = { both: "везде", room: "в номере", hotel: "в доме
 const PRESET_COLORS = ["#3a3f47", "#5fc8ff", "#1bd96a", "#ff8a5c", "#ff496e", "#c78aff", "#ffd166"]
 
 const bookingStatuses = computed(() => statuses.value.filter((s) => s.kind !== "system"))
+// Привязка статуса к состоянию брони: при смене состояния лента сама перекрашивается
+const STAGE_NAME = { expected: "Ожидается заезд", checked_in: "Проживает", checked_out: "Выехал" }
 const systemStatuses = computed(() => statuses.value.filter((s) => s.kind === "system"))
 const SYSTEM_WHY = {
 	free: "место свободно — когда на нём нет брони",
@@ -70,13 +72,14 @@ onMounted(async () => {
 /* ---------- общие помощники ---------- */
 function startEdit(kind, item) {
 	if (!canEdit) return
-	editing.value = { kind, ...item }
+	// kind записи (booking/system у статусов) не должен затирать вид редактора
+	editing.value = { ...item, kind, kind2: item.kind }
 }
 async function saveEdit() {
 	const e = editing.value
 	try {
 		if (e.kind === "class") await put("/classes/" + e.id, { name: e.name })
-		if (e.kind === "status") await put("/statuses/" + e.id, { name: e.name, color: e.color, sort: e.sort })
+		if (e.kind === "status") await put("/statuses/" + e.id, { name: e.name, color: e.color, sort: e.sort, ...(e.kind2 === "system" ? {} : { stage: e.stage || null }) })
 		if (e.kind === "amenity") await put("/amenities/" + e.id, { name: e.name, icon: e.icon, scope: e.scope })
 		editing.value = null
 		await reload()
@@ -171,8 +174,9 @@ async function addAmenity() {
 		<!-- СТАТУСЫ -->
 		<template v-else-if="tab === 'statuses'">
 			<p class="lead">
-				Цвет статуса — это цвет ленты брони в календаре броней. Статус брони назначают человеку при заселении.
-				Свободно и Ремонт — производные состояния: их никому не назначают, они только задают цвет.
+				Статус — это цвет ленты брони в календаре. Статус, привязанный к состоянию, ставится сам:
+				оформили бронь — «Ожидается заезд», нажали «Заселить» — лента перекрасилась. Статусы без привязки —
+				особые метки (например, «Командировка»): их выбирают в брони вручную.
 			</p>
 
 			<Card v-if="canEdit" pad="md" class="addbar">
@@ -198,12 +202,17 @@ async function addAmenity() {
 					<template v-if="editing?.kind === 'status' && editing.id === s.id">
 						<input v-model="editing.color" type="color" class="colorpick" />
 						<Input v-model="editing.name" style="flex: 1" @keyup.enter="saveEdit" />
+						<select v-model="editing.stage" class="stage-sel" title="Когда ставится сам">
+							<option :value="null">особая метка</option>
+							<option v-for="(n, k) in STAGE_NAME" :key="k" :value="k">авто: {{ n }}</option>
+						</select>
 						<Button size="sm" variant="primary" icon="check" @click="saveEdit" />
 						<Button size="sm" variant="ghost" icon="x" @click="editing = null" />
 					</template>
 					<template v-else>
 						<span class="ribbon-demo" :style="{ background: s.color }" />
 						<span class="item-name">{{ s.name }}</span>
+						<span class="stage-tag" :class="{ own: !s.stage }">{{ s.stage ? "ставится сам: " + STAGE_NAME[s.stage] : "особая метка" }}</span>
 						<span class="usage" :class="{ zero: !s.used_count }">{{ s.used_count }} брон.</span>
 						<IconButton v-if="canEdit" icon="pencil" label="Изменить" size="sm" @click="startEdit('status', s)" />
 						<IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click="remove('status', s, '/statuses/', 'Статус')" />
@@ -280,6 +289,24 @@ async function addAmenity() {
 </template>
 
 <style scoped>
+.stage-tag {
+	font-size: var(--font-size-xs);
+	color: var(--color-green);
+	white-space: nowrap;
+}
+.stage-tag.own {
+	color: var(--color-secondary);
+}
+.stage-sel {
+	height: var(--control-h-sm);
+	border-radius: var(--radius-sm);
+	border: 1px solid var(--color-button-border);
+	background: var(--color-bg);
+	color: var(--color-contrast);
+	font: inherit;
+	font-size: var(--font-size-xs);
+	padding: 0 6px;
+}
 .lead {
 	margin: 0;
 	color: var(--color-secondary);

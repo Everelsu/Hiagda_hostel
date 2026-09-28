@@ -6,6 +6,7 @@ import { toast } from "@/toast"
 import { useOverview, loadFeed } from "@/api/me"
 import Icon from "@/components/Icon.vue"
 import IssueThread from "@/components/IssueThread.vue"
+import { amenityIcon } from "@/icons"
 import { PageHeader, Card, ListRow, Chip, StatusDot, Drawer, Field, Select, Textarea, Button, EmptyState } from "@/ui"
 
 const { overview, load } = useOverview()
@@ -30,6 +31,16 @@ onMounted(async () => {
 		loading.value = false
 	}
 })
+
+// Частые формулировки — в одно касание, печатать на телефоне неудобно
+const QUICK = ["Не работает", "Протекает", "Нет горячей воды", "Сломано", "Не закрывается", "Шумит", "Нет света"]
+function addQuick(t) {
+	const c = form.value.comment.trim()
+	form.value.comment = c ? `${c}. ${t.toLowerCase()}` : t
+}
+function pickAmenity(name) {
+	form.value.amenity_name = form.value.amenity_name === name ? "" : name
+}
 
 function openNew() {
 	form.value = { amenity_name: "", comment: "", photo: "" }
@@ -91,18 +102,41 @@ async function submit() {
 		</div>
 
 		<Drawer v-if="creating" title="Новая заявка на ремонт" @close="creating = false">
-			<Field v-if="overview?.room?.amenities?.length" label="Что сломалось (необязательно)">
-				<Select v-model="form.amenity_name">
-					<option value="">— выбрать из удобств —</option>
-					<option v-for="a in overview.room.amenities" :key="a.name" :value="a.name">{{ a.name }}</option>
-				</Select>
-			</Field>
-			<Field label="Опишите проблему"><Textarea v-model="form.comment" :rows="4" placeholder="Например: не работает розетка у кровати" /></Field>
-			<Field label="Фото (необязательно)">
-				<input type="file" accept="image/*" @change="onFile" />
-				<div v-if="uploading" class="muted" style="font-size: var(--font-size-xs); margin-top: 4px">Загрузка…</div>
-				<img v-if="form.photo" :src="form.photo" alt="фото" class="preview" />
-			</Field>
+			<div v-if="overview?.room?.amenities?.length" class="step">
+				<div class="step__label">Что сломалось? <span class="muted">— можно не выбирать</span></div>
+				<div class="tiles">
+					<button
+						v-for="a in overview.room.amenities"
+						:key="a.name"
+						type="button"
+						class="tile"
+						:class="{ on: form.amenity_name === a.name }"
+						@click="pickAmenity(a.name)"
+					>
+						<Icon :name="amenityIcon(a.icon)" size="1.3rem" />
+						<span>{{ a.name }}</span>
+					</button>
+				</div>
+			</div>
+			<div class="step">
+				<div class="step__label">Что случилось?</div>
+				<div class="quick">
+					<button v-for="q in QUICK" :key="q" type="button" class="quick__chip" @click="addQuick(q)">{{ q }}</button>
+				</div>
+				<Textarea v-model="form.comment" :rows="3" placeholder="Коротко: что и где. Например, не работает розетка у кровати" />
+			</div>
+			<div class="step">
+				<div class="step__label">Фото <span class="muted">— коменданту так проще понять</span></div>
+				<label v-if="!form.photo" class="shot" :class="{ busy: uploading }">
+					<input type="file" accept="image/*" capture="environment" hidden @change="onFile" />
+					<Icon :name="uploading ? 'rotate-cw' : 'camera'" size="1.5rem" />
+					<span>{{ uploading ? "Загружаем фото…" : "Сфотографировать или выбрать" }}</span>
+				</label>
+				<div v-else class="shot-preview">
+					<img :src="form.photo" alt="фото" />
+					<button type="button" class="shot-preview__x" aria-label="Убрать фото" @click="form.photo = ''"><Icon name="x" /></button>
+				</div>
+			</div>
 			<template #foot>
 				<Button variant="ghost" @click="creating = false">Отмена</Button>
 				<Button variant="primary" :loading="busy" :disabled="uploading" @click="submit">Отправить</Button>
@@ -125,6 +159,110 @@ async function submit() {
 </template>
 
 <style scoped>
+.step {
+	display: grid;
+	gap: var(--gap-sm);
+}
+.step__label {
+	font-weight: var(--font-weight-bold);
+	color: var(--color-contrast);
+	font-size: var(--font-size-sm);
+}
+.step__label .muted {
+	font-weight: 400;
+}
+.tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+	gap: var(--gap-sm);
+}
+.tile {
+	display: grid;
+	justify-items: center;
+	gap: 6px;
+	padding: var(--gap-md) var(--gap-sm);
+	border: 1px solid var(--color-divider);
+	border-radius: var(--radius-md);
+	background: var(--color-bg);
+	color: var(--color-base);
+	font: inherit;
+	font-size: var(--font-size-xs);
+	font-weight: var(--font-weight-bold);
+	text-align: center;
+	cursor: pointer;
+}
+.tile :deep(svg) {
+	color: var(--color-brand);
+}
+.tile.on {
+	border-color: var(--color-brand);
+	background: var(--color-brand-highlight);
+	color: var(--color-contrast);
+}
+.quick {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.quick__chip {
+	padding: 6px 12px;
+	border: 1px solid var(--color-button-border);
+	border-radius: var(--radius-max);
+	background: transparent;
+	color: var(--color-base);
+	font: inherit;
+	font-size: var(--font-size-xs);
+	font-weight: var(--font-weight-bold);
+	cursor: pointer;
+}
+.quick__chip:active {
+	background: var(--color-brand-highlight);
+	border-color: var(--color-brand);
+}
+.shot {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--gap-sm);
+	min-height: 5rem;
+	border: 2px dashed var(--color-button-border);
+	border-radius: var(--radius-lg);
+	color: var(--color-secondary);
+	font-weight: var(--font-weight-bold);
+	font-size: var(--font-size-sm);
+	cursor: pointer;
+}
+.shot :deep(svg) {
+	color: var(--color-brand);
+}
+.shot.busy {
+	pointer-events: none;
+	opacity: 0.7;
+}
+.shot-preview {
+	position: relative;
+}
+.shot-preview img {
+	width: 100%;
+	max-height: 260px;
+	object-fit: cover;
+	border-radius: var(--radius-lg);
+	display: block;
+}
+.shot-preview__x {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	width: 2.2rem;
+	height: 2.2rem;
+	display: grid;
+	place-items: center;
+	border: none;
+	border-radius: 50%;
+	background: rgba(0, 0, 0, 0.6);
+	color: #fff;
+	cursor: pointer;
+}
 .preview {
 	max-width: 100%;
 	border-radius: var(--radius-md);
