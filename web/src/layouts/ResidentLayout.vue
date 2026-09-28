@@ -9,6 +9,7 @@ import { onRealtime } from "@/realtime"
 import { theme, toggleTheme } from "@/utils/theme"
 import { useIndicator } from "@/ui/useIndicator"
 import Icon from "@/components/Icon.vue"
+import BrandMark from "@/components/BrandMark.vue"
 import Modal from "@/components/Modal.vue"
 import { Input, Field, Button } from "@/ui"
 
@@ -66,7 +67,7 @@ const stopRealtime = onRealtime(async (e) => {
 		}
 	} else if (e.type === "issues:changed" && !route.path.startsWith("/me/issues")) {
 		loadFeed(true).catch(() => {})
-		toast.action("Заявка обновилась", "Посмотреть", () => router.push("/me/issues"), "info")
+		toast.action(e.deleted ? "Комендант удалил заявку" : "Заявка обновилась", "Посмотреть", () => router.push("/me/issues"), "info")
 	}
 })
 onUnmounted(() => {
@@ -76,7 +77,6 @@ onUnmounted(() => {
 
 function logout() {
 	auth.logout()
-	router.push({ name: "login" })
 }
 async function changePassword() {
 	if (newPass.value.length < 6) return toast.error("Пароль слишком короткий — минимум 6 символов")
@@ -98,7 +98,7 @@ async function changePassword() {
 	<div class="res-shell" :style="topH ? { '--res-top-h': topH + 'px' } : null">
 		<header ref="top" class="res-top">
 			<div class="res-top__inner">
-				<router-link to="/me" class="brand-mark"><span class="dot" /> Хиагда</router-link>
+				<router-link to="/me" class="brand-mark"><BrandMark size="1.6rem" /> Хиагда</router-link>
 				<nav ref="topNav" class="res-nav">
 					<span class="res-nav__thumb" :style="topThumb" aria-hidden="true" />
 					<router-link v-for="(t, i) in tabs" :key="t.to" :to="t.to" :class="{ on: activeIndex === i }">

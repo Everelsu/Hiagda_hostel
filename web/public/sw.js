@@ -12,8 +12,9 @@ self.addEventListener("push", (e) => {
 				body: d.body || "",
 				tag: d.tag,
 				renotify: !!d.tag,
-				icon: "/icon.svg",
-				badge: "/icon.svg",
+				// PNG: SVG-иконки в уведомлениях Windows и Android не показываются
+				icon: "/icon-192.png",
+				badge: "/badge-96.png",
 				data: { url: d.url || "/me" },
 			})
 		}),

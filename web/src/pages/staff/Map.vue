@@ -2,11 +2,15 @@
 import { ref, onMounted, computed } from "vue"
 import { useRouter } from "vue-router"
 import { api } from "@/api/client"
+import { useAuthStore } from "@/stores/auth"
 import MapView from "@/components/MapView.vue"
 import Icon from "@/components/Icon.vue"
 import { PageHeader, Card, Chip, StatusDot, Skeleton, EmptyState, Button, Input, Select, SegmentedControl } from "@/ui"
 
 const router = useRouter()
+// Ремонтнику календарь броней недоступен — из карточки дома он идёт в заявки
+const repairOnly = useAuthStore().isRepairOnly
+const canRepair = useAuthStore().canRepair
 const rows = ref([])
 const loading = ref(true)
 const selectedId = ref(null)
@@ -94,6 +98,9 @@ const markers = computed(() =>
 	})),
 )
 
+function openIssues(row) {
+	router.push({ path: "/app/issues", query: { hotel_id: row.id } })
+}
 function openRack(row) {
 	router.push({ name: "rack", query: { hotel_id: row.id } })
 }
@@ -175,7 +182,13 @@ function openRack(row) {
 
 						<a v-if="selected.phone" :href="`tel:${selected.phone}`" class="phone"><Icon name="phone" size="0.9em" /> {{ selected.phone }}</a>
 
-						<Button variant="primary" icon="calendar" class="rack-btn" @click="openRack(selected)">Открыть календарь броней</Button>
+						<Button v-if="repairOnly" variant="primary" icon="wrench" class="rack-btn" @click="openIssues(selected)">
+							Заявки по дому{{ selected.issues ? " · " + selected.issues : "" }}
+						</Button>
+						<template v-else>
+							<Button variant="primary" icon="calendar" class="rack-btn" @click="openRack(selected)">Открыть календарь броней</Button>
+							<Button v-if="canRepair && selected.issues" icon="wrench" class="rack-btn rack-btn--2" @click="openIssues(selected)">Заявки по дому · {{ selected.issues }}</Button>
+						</template>
 					</Card>
 
 					<div class="list">
@@ -335,8 +348,13 @@ function openRack(row) {
 	width: 100%;
 	margin-top: var(--gap-md);
 }
+.rack-btn--2 {
+	margin-top: var(--gap-sm);
+}
 .list {
 	display: grid;
+	/* строки по высоте содержимого, а не растянуты на всю высоту списка */
+	align-content: start;
 	gap: var(--gap-xs);
 	max-height: calc(100vh - 640px);
 	min-height: 180px;

@@ -373,7 +373,8 @@ onMounted(async () => {
 					</div>
 				</template>
 				<div class="hrow__acts" @click.stop>
-					<Button size="sm" icon="calendar" @click="router.push({ path: '/app/rack', query: { hotel_id: h.id } })">Календарь</Button>
+					<Button v-if="!auth.isRepairOnly" size="sm" icon="calendar" @click="router.push({ path: '/app/rack', query: { hotel_id: h.id } })">Календарь</Button>
+						<Button v-else size="sm" icon="wrench" @click="router.push({ path: '/app/issues', query: { hotel_id: h.id } })">Заявки</Button>
 					<Button size="sm" icon="layout" @click="router.push('/app/plan')">План</Button>
 					<IconButton v-if="canEdit" icon="pencil" label="Изменить" size="sm" @click="editHotel(h)" />
 					<IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click="removeHotel(h)" />

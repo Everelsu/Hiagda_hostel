@@ -1,12 +1,10 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from "vue"
-import { useRouter } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
 import ToastHost from "@/ui/ToastHost.vue"
 import ConfirmHost from "@/ui/ConfirmHost.vue"
 import { connectRealtime, disconnectRealtime } from "@/realtime"
 
-const router = useRouter()
 const auth = useAuthStore()
 
 // На вахте связь бывает рваной: честно говорим, что сохранить сейчас не получится
@@ -16,7 +14,6 @@ const setOffline = () => (offline.value = true)
 
 function onUnauthorized() {
 	auth.logout()
-	router.push({ name: "login" })
 }
 onMounted(() => {
 	window.addEventListener("noch:unauthorized", onUnauthorized)

@@ -437,11 +437,12 @@ api.post("/me/issues", async (req, res) => {
 
 	try {
 		const info = await db.prepare(`
-			INSERT INTO room_issues (room_id, user_id, amenity_name, comment, photo, status, created_at)
-			VALUES (?, ?, ?, ?, ?, 'Новая', to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
+			INSERT INTO room_issues (room_id, user_id, amenity_name, comment, photo, status)
+			VALUES (?, ?, ?, ?, ?, 'Новая')
 		`).run(room_id, req.user?.id ?? null, amenity_name, comment.trim(), photo || null)
 
-		broadcast("issues:changed", { issueId: Number(info.lastInsertRowid) }, (user) => STAFF_ROLES.has(user.role) || user.id === req.user.id)
+		const mates = await roomUserIds(room_id)
+		broadcast("issues:changed", { issueId: Number(info.lastInsertRowid) }, (user) => STAFF_ROLES.has(user.role) || user.id === req.user.id || mates.includes(user.id))
 		res.json({ ok: true, id: info.lastInsertRowid })
 	} catch (e) {
 		console.error("POST /me/issues:", e.message)
@@ -614,7 +615,7 @@ api.get("/issues/:id/comments", async (req, res) => {
 	res.json(
 		await db
 			.prepare(
-				`SELECT ic.id, ic.text, ic.created_at, u.full_name AS author, u.role AS author_role
+				`SELECT ic.id, ic.text, ic.photo, ic.created_at, ic.user_id, u.full_name AS author, u.role AS author_role, (u.resident_id IS NULL) AS author_staff
 				 FROM issue_comments ic LEFT JOIN users u ON u.id = ic.user_id
 				 WHERE ic.issue_id = ? ORDER BY ic.id`,
 			)
@@ -623,20 +624,27 @@ api.get("/issues/:id/comments", async (req, res) => {
 })
 
 api.post("/issues/:id/comments", async (req, res) => {
-	const issue = await db.prepare("SELECT user_id, room_id FROM room_issues WHERE id = ?").get(req.params.id)
+	const issue = await db.prepare("SELECT user_id, room_id, status FROM room_issues WHERE id = ?").get(req.params.id)
 	if (!issue) return res.status(404).json({ error: "Заявка не найдена" })
 	if (!isStaffUser(req.user) && !(await issueVisibleToResident(issue, req.user))) return res.status(403).json({ error: "Недостаточно прав" })
+	// Починенная заявка закрыта: переписка только для чтения с обеих сторон
+	if (issue.status === "Починено")
+		return res.status(409).json({
+			error: isStaffUser(req.user) ? "Заявка закрыта. Чтобы написать, верните её в работу." : "Заявка закрыта. Если снова сломалось — создайте новую.",
+		})
 	const text = (req.body?.text || "").trim()
-	if (!text) return res.status(400).json({ error: "Введите сообщение" })
-	const info = await db.prepare("INSERT INTO issue_comments (issue_id, user_id, text) VALUES (?,?,?)").run(req.params.id, req.user.id, text)
+	const photo = req.body?.photo || null
+	if (photo && !/^\/uploads\/[\w.-]+$/.test(photo)) return res.status(400).json({ error: "Сначала загрузите фото" })
+	if (!text && !photo) return res.status(400).json({ error: "Введите сообщение" })
+	const info = await db.prepare("INSERT INTO issue_comments (issue_id, user_id, text, photo) VALUES (?,?,?,?)").run(req.params.id, req.user.id, text, photo)
 	// Заявка общая на номер — сообщение видят и те, кто живёт в нём сейчас
 	const mates = await roomUserIds(issue.room_id)
 	broadcast("issue:comment", { issueId: Number(req.params.id) }, (user) => STAFF_ROLES.has(user.role) || user.id === issue.user_id || mates.includes(user.id))
 	// Ответ коменданта — пушем автору и соседям
 	if (isStaffUser(req.user))
 		push.notify([issue.user_id, ...mates].filter((id) => id !== req.user.id), {
-			title: "Ответ по заявке",
-			body: text.length > 140 ? text.slice(0, 140) + "…" : text,
+			title: "Комендант ответил по заявке",
+			body: !text ? "📷 Фото" : text.length > 140 ? text.slice(0, 140) + "…" : text,
 			url: "/me/issues",
 			tag: "issue-" + req.params.id,
 		})
@@ -733,7 +741,7 @@ api.post("/announcements", requireRole("editor"), async (req, res) => {
 		.all(todayStr(), hotel_id || null, hotel_id || null)
 	push.notify(
 		to.map((r) => r.id),
-		{ title: "📢 " + title, body: body.length > 140 ? body.slice(0, 140) + "…" : body, url: "/me", tag: "ann-" + info.lastInsertRowid },
+		{ title, body: body.length > 140 ? body.slice(0, 140) + "…" : body, url: "/me", tag: "ann-" + info.lastInsertRowid },
 	)
 	res.json({ id: info.lastInsertRowid })
 })
@@ -2331,19 +2339,32 @@ api.put("/issues/:id/status", requireRepair, async (req, res) => {
 	if (!ISSUE_STATUSES.includes(status)) {
 		return res.status(400).json({ error: `Недопустимый статус заявки. Допустимые: ${ISSUE_STATUSES.join(", ")}` })
 	}
-	const issue = await db.prepare("SELECT user_id, room_id, amenity_name, status FROM room_issues WHERE id = ?").get(req.params.id)
+	const issue = await db
+		.prepare("SELECT ri.user_id, ri.room_id, ri.amenity_name, ri.status, rm.number AS room_number FROM room_issues ri JOIN rooms rm ON rm.id = ri.room_id WHERE ri.id = ?")
+		.get(req.params.id)
 	if (!issue) return res.status(404).json({ error: "Заявка не найдена" })
 	await db.prepare("UPDATE room_issues SET status = ? WHERE id = ?").run(status, req.params.id)
 	if (status !== issue.status)
 		push.notify([issue.user_id, ...(await roomUserIds(issue.room_id))].filter((id) => id !== req.user.id), {
-			title: { Починено: "✅ Починили", "В работе": "🔧 Заявку взяли в работу" }[status] || "Заявка снова открыта",
-			body: `${issue.amenity_name || "Заявка"}: ${status.toLowerCase()}`,
+			title: `${{ Починено: "Починили", "В работе": "Взяли в работу" }[status] || "Снова открыта"}: ${issue.amenity_name || "заявка"}`,
+			body: `Номер ${issue.room_number} · статус «${status}»`,
 			url: "/me/issues",
 			tag: "issue-" + req.params.id,
 		})
-	broadcast("issues:changed", { issueId: Number(req.params.id) }, (user) => STAFF_ROLES.has(user.role) || user.id === issue?.user_id)
+	const mates = await roomUserIds(issue.room_id)
+	broadcast("issues:changed", { issueId: Number(req.params.id) }, (user) => STAFF_ROLES.has(user.role) || user.id === issue.user_id || mates.includes(user.id))
 	res.json({ ok: true })
-});
+})
+
+// Удалить лишнюю заявку (дубль, ошибка) вместе с перепиской
+api.delete("/issues/:id", requireRole("editor"), async (req, res) => {
+	const issue = await db.prepare("SELECT user_id, room_id FROM room_issues WHERE id = ?").get(req.params.id)
+	if (!issue) return res.status(404).json({ error: "Заявка не найдена" })
+	await db.prepare("DELETE FROM room_issues WHERE id = ?").run(req.params.id)
+	const mates = await roomUserIds(issue.room_id)
+	broadcast("issues:changed", { issueId: Number(req.params.id), deleted: true }, (user) => STAFF_ROLES.has(user.role) || user.id === issue.user_id || mates.includes(user.id))
+	res.json({ ok: true })
+})
 
 // Имя файла по-русски: в заголовке допустим только ASCII, поэтому кириллицу
 // передаём через filename* (RFC 5987), а в filename — транслитерацию-заглушку.

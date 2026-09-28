@@ -1,16 +1,16 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue"
-import { useRouter, useRoute } from "vue-router"
+import { useRoute } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
 import { useCounters } from "@/stores/counters"
 import { onRealtime } from "@/realtime"
 import { STAFF_NAV } from "@/config/nav"
 import { theme, toggleTheme } from "@/utils/theme"
 import Icon from "@/components/Icon.vue"
+import BrandMark from "@/components/BrandMark.vue"
 import CommandPalette from "@/components/CommandPalette.vue"
 import { IconButton, Badge, Avatar } from "@/ui"
 
-const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 const counters = useCounters()
@@ -55,7 +55,6 @@ function badgeValue(item) {
 }
 function logout() {
 	auth.logout()
-	router.push({ name: "login" })
 }
 
 onMounted(() => counters.refresh())
@@ -74,7 +73,7 @@ onUnmounted(stopRealtime)
 <template>
 	<div class="shell">
 		<aside class="sidebar" :class="{ open: mobileOpen }">
-			<div class="brand-mark sidebar__brand"><span class="dot" /> Хиагда</div>
+			<div class="brand-mark sidebar__brand"><BrandMark size="1.6rem" /> Хиагда</div>
 			<nav class="nav">
 				<template v-for="g in groups" :key="g.heading">
 					<div class="nav__heading">{{ g.heading }}</div>

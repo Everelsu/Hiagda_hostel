@@ -3,13 +3,11 @@ import { ref, computed, onMounted } from "vue"
 import { api, put, post, uploadFile } from "@/api/client"
 import { toast } from "@/toast"
 import Icon from "@/components/Icon.vue"
-import { useRouter } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
 import { theme, setTheme } from "@/utils/theme"
 import { pushState, enablePush, disablePush, needsHomeScreen } from "@/utils/push"
 import { PageHeader, Card, Field, Input, Textarea, Button, Switch, Avatar, SegmentedControl, confirm } from "@/ui"
 
-const router = useRouter()
 const auth = useAuthStore()
 const THEMES = [
 	{ value: "light", label: "Светлая" },
@@ -18,7 +16,6 @@ const THEMES = [
 async function logout() {
 	if (!(await confirm({ title: "Выйти из кабинета?", message: "Чтобы войти снова, понадобятся логин и пароль.", confirmLabel: "Выйти" }))) return
 	auth.logout()
-	router.push({ name: "login" })
 }
 
 const resident = ref(null)

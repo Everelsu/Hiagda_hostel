@@ -1,6 +1,7 @@
 <script setup>
 import { dateTime as fmt } from "@/utils/date"
-import { ref, computed, onMounted } from "vue"
+import { ref, computed, onMounted, onUnmounted } from "vue"
+import { onRealtime } from "@/realtime"
 import { useRoute, useRouter } from "vue-router"
 import IssueSteps from "@/components/IssueSteps.vue"
 import { api, post, uploadFile } from "@/api/client"
@@ -8,6 +9,7 @@ import { toast } from "@/toast"
 import { useOverview, loadFeed } from "@/api/me"
 import Icon from "@/components/Icon.vue"
 import IssueThread from "@/components/IssueThread.vue"
+import PhotoView from "@/components/PhotoView.vue"
 import { amenityIcon } from "@/icons"
 import { PageHeader, Card, ListRow, Chip, StatusDot, Drawer, Field, Select, Textarea, Button, EmptyState } from "@/ui"
 
@@ -26,7 +28,27 @@ const STATUS_COLOR = { Новая: "var(--color-red)", "В работе": "var(-
 
 async function loadIssues() {
 	issues.value = await api("/me/issues")
+	// открытая карточка — со свежим статусом
+	if (active.value) {
+		const fresh = issues.value.find((i) => i.id === active.value.id)
+		if (fresh) active.value = { ...fresh }
+	}
 }
+// Комендант сменил статус, сосед завёл заявку, заявку удалили — список обновляется сам
+let rtTimer = 0
+const stopRealtime = onRealtime((e) => {
+	if (e.type !== "issues:changed" && e.type !== "issue:comment") return
+	if (e.deleted && active.value?.id === e.issueId) {
+		active.value = null
+		toast.info("Эту заявку удалил комендант")
+	}
+	clearTimeout(rtTimer)
+	rtTimer = setTimeout(() => loadIssues().catch(() => {}), 250)
+})
+onUnmounted(() => {
+	stopRealtime()
+	clearTimeout(rtTimer)
+})
 onMounted(async () => {
 	try {
 		await load()
@@ -182,11 +204,8 @@ async function submit() {
 				<span class="muted">· {{ author(active) === "Вы" ? "ваша заявка" : "заявил " + author(active) }}</span>
 			</div>
 			<p style="margin: var(--gap-sm) 0 0; white-space: pre-wrap">{{ active.comment }}</p>
-			<img v-if="active.photo" :src="active.photo" alt="фото заявки" class="preview" />
-			<div style="margin-top: var(--gap-md)">
-				<label style="font-size: var(--font-size-xs); color: var(--color-secondary)">Переписка с комендантом{{ active.mine ? "" : " — можно дописать, если у вас то же" }}</label>
-				<IssueThread :issue-id="active.id" />
-			</div>
+			<PhotoView v-if="active.photo" :src="active.photo" alt="Фото заявки" />
+			<IssueThread :issue-id="active.id" :closed="active.status === 'Починено'" closed-hint="Заявка закрыта. Если снова сломалось — создайте новую." :title="active.mine ? 'Переписка с комендантом' : 'Переписка с комендантом — можно дописать, если у вас то же'" />
 		</Drawer>
 	</div>
 </template>
@@ -393,11 +412,5 @@ async function submit() {
 	background: rgba(0, 0, 0, 0.6);
 	color: #fff;
 	cursor: pointer;
-}
-.preview {
-	max-width: 100%;
-	border-radius: var(--radius-md);
-	border: 1px solid var(--color-divider);
-	margin-top: var(--gap-sm);
 }
 </style>

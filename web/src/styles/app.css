@@ -2,8 +2,23 @@
 	box-sizing: border-box;
 }
 html {
-	font-family: "Inter", system-ui, sans-serif;
+	font-family: "InterVariable", "Inter", system-ui, sans-serif;
+	/* крупный текст автоматически берёт «дисплейное» начертание Inter — плотнее и чище */
+	font-optical-sizing: auto;
 	font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	text-rendering: optimizeLegibility;
+}
+h1,
+h2,
+h3 {
+	letter-spacing: -0.02em;
+	line-height: 1.2;
+	text-wrap: balance;
+}
+p {
+	text-wrap: pretty;
 }
 body {
 	margin: 0;

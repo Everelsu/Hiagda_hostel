@@ -1,17 +1,25 @@
 <script setup>
 import { dateTime as fmt } from "@/utils/date"
-import { ref, onMounted, computed } from "vue"
-import { api, put } from "@/api/client"
+import { ref, onMounted, onUnmounted, computed } from "vue"
+import { useRoute } from "vue-router"
+import { api, put, del } from "@/api/client"
+import { onRealtime } from "@/realtime"
+import { useAuthStore } from "@/stores/auth"
 import { toast } from "@/toast"
 import Icon from "@/components/Icon.vue"
 import IssueThread from "@/components/IssueThread.vue"
-import { PageHeader, FilterBar, Select, DataTable, Drawer, Button, Chip, StatusDot, SegmentedControl } from "@/ui"
+import PhotoView from "@/components/PhotoView.vue"
+import { PageHeader, FilterBar, Select, DataTable, Drawer, Button, Chip, StatusDot, SegmentedControl, confirm } from "@/ui"
 
-const items = ref([])
+const route = useRoute()
+const auth = useAuthStore()
+const canDelete = auth.can("editor")
+const all = ref([])
 const hotels = ref([])
 const loading = ref(true)
 const fStatus = ref("")
-const fHotel = ref("")
+// С карты приходят сразу с нужным домом: /app/issues?hotel_id=1
+const fHotel = ref(route.query.hotel_id ? String(route.query.hotel_id) : "")
 const active = ref(null)
 
 const STATUSES = ["Новая", "В работе", "Починено"]
@@ -23,29 +31,65 @@ const columns = [
 	{ key: "status", label: "Статус" },
 ]
 
-async function load() {
-	loading.value = true
+// Грузим все заявки дома, а по статусу фильтруем на месте — тогда счётчики на кнопках
+// честные для всех статусов, а не только для выбранного
+async function load(quiet = false) {
+	if (!quiet) loading.value = true
 	try {
-		const qs = new URLSearchParams()
-		if (fStatus.value) qs.set("status", fStatus.value)
-		if (fHotel.value) qs.set("hotel_id", fHotel.value)
-		items.value = await api("/issues" + (qs.toString() ? "?" + qs : ""))
+		all.value = await api("/issues" + (fHotel.value ? "?hotel_id=" + fHotel.value : ""))
+		// открытая карточка — свежие статус и данные
+		if (active.value) {
+			const fresh = all.value.find((i) => i.id === active.value.id)
+			if (fresh) active.value = { ...fresh }
+		}
 	} finally {
 		loading.value = false
 	}
 }
+const items = computed(() => (fStatus.value ? all.value.filter((i) => i.status === fStatus.value) : all.value))
 onMounted(async () => {
 	hotels.value = await api("/hotels")
 	await load()
 })
 
+// Новые заявки, смена статуса, сообщения — список обновляется сам
+let timer = 0
+const stopRealtime = onRealtime((e) => {
+	if (e.type !== "issues:changed" && e.type !== "issue:comment") return
+	if (e.deleted && active.value?.id === e.issueId) active.value = null
+	clearTimeout(timer)
+	timer = setTimeout(() => load(true), 250)
+})
+onUnmounted(() => {
+	stopRealtime()
+	clearTimeout(timer)
+})
+
+async function removeIssue(issue) {
+	const ok = await confirm({
+		title: "Удалить заявку?",
+		message: `«${issue.amenity_name || "Заявка"}» в № ${issue.room_number} пропадёт вместе с перепиской — и у вахтовика тоже. Для починенных лучше оставить статус «Починено».`,
+		danger: true,
+		confirmLabel: "Удалить заявку",
+	})
+	if (!ok) return
+	try {
+		await del("/issues/" + issue.id)
+		active.value = null
+		all.value = all.value.filter((i) => i.id !== issue.id)
+		toast.success("Заявка удалена")
+	} catch (e) {
+		toast.error(e.message)
+	}
+}
+
 const counts = computed(() => {
 	const c = { Новая: 0, "В работе": 0, Починено: 0 }
-	for (const i of items.value) c[i.status] = (c[i.status] || 0) + 1
+	for (const i of all.value) c[i.status] = (c[i.status] || 0) + 1
 	return c
 })
 const statusOptions = computed(() => [
-	{ value: "", label: "Все" },
+	{ value: "", label: "Все", count: all.value.length },
 	{ value: "Новая", label: "Новые", count: counts.value["Новая"] },
 	{ value: "В работе", label: "В работе", count: counts.value["В работе"] },
 	{ value: "Починено", label: "Готово", count: counts.value["Починено"] },
@@ -55,6 +99,8 @@ async function setStatus(issue, status) {
 	try {
 		await put("/issues/" + issue.id + "/status", { status })
 		issue.status = status
+		const row = all.value.find((i) => i.id === issue.id)
+		if (row) row.status = status
 		if (active.value?.id === issue.id) active.value.status = status
 		toast.success("Статус: " + status)
 	} catch (e) {
@@ -68,9 +114,9 @@ async function setStatus(issue, status) {
 		<PageHeader title="Заявки на ремонт" icon="wrench" />
 
 		<div class="row wrap" style="gap: var(--gap-md); align-items: flex-end">
-			<SegmentedControl v-model="fStatus" :options="statusOptions" @update:model-value="load" />
+			<SegmentedControl v-model="fStatus" :options="statusOptions" />
 			<FilterBar>
-				<Select v-model="fHotel" style="width: auto" title="Гостиница" @change="load"><option value="">Все гостиницы</option><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></Select>
+				<Select v-model="fHotel" style="width: auto" title="Гостиница" @change="load()"><option value="">Все гостиницы</option><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></Select>
 			</FilterBar>
 		</div>
 
@@ -90,26 +136,22 @@ async function setStatus(issue, status) {
 		<Drawer v-if="active" :title="`Заявка · ${active.hotel_name} № ${active.room_number}`" width="520px" @close="active = null">
 			<div v-if="active.amenity_name" class="muted" style="font-size: var(--font-size-sm)">Объект: <b class="contrast">{{ active.amenity_name }}</b></div>
 			<p style="margin: var(--gap-sm) 0 0; white-space: pre-wrap">{{ active.comment }}</p>
-			<img v-if="active.photo" :src="active.photo" alt="фото заявки" class="issue-photo" />
+			<PhotoView v-if="active.photo" :src="active.photo" alt="Фото заявки" />
 			<div style="margin-top: var(--gap-md)">
 				<label style="font-size: var(--font-size-xs); color: var(--color-secondary)">Статус</label>
 				<div class="row wrap" style="gap: var(--gap-xs); margin-top: var(--gap-xs)">
 					<Button v-for="s in STATUSES" :key="s" size="sm" :variant="active.status === s ? 'primary' : 'default'" @click="setStatus(active, s)">{{ s }}</Button>
+					<Button v-if="canDelete" size="sm" variant="ghost" icon="trash" class="del-btn" @click="removeIssue(active)">Удалить</Button>
 				</div>
 			</div>
-			<div style="margin-top: var(--gap-md)">
-				<label style="font-size: var(--font-size-xs); color: var(--color-secondary)">Переписка</label>
-				<IssueThread :issue-id="active.id" />
-			</div>
+			<IssueThread :issue-id="active.id" :closed="active.status === 'Починено'" closed-hint="Заявка закрыта. Чтобы написать, верните её «В работу» кнопкой выше." />
 		</Drawer>
 	</div>
 </template>
 
 <style scoped>
-.issue-photo {
-	max-width: 100%;
-	border-radius: var(--radius-md);
-	border: 1px solid var(--color-divider);
-	margin-top: var(--gap-sm);
+.del-btn {
+	margin-left: auto;
+	color: var(--color-red);
 }
 </style>

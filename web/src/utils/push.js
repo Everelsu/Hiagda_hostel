@@ -38,7 +38,19 @@ export async function disablePush() {
 	await sub.unsubscribe()
 }
 
-// При выходе: устройство больше не получает чужие уведомления (сервер сам забудет подписку)
-export function dropPushOnLogout() {
-	if (pushSupported) currentSub().then((s) => s?.unsubscribe()).catch(() => {})
+// При выходе: устройство больше не получает уведомления этой учётки. Запрос с keepalive
+// долетает до сервера, даже если страница уже перезагружается; ждём только локальную часть.
+export async function dropPushOnLogout(token) {
+	if (!pushSupported || !token) return
+	try {
+		const sub = await Promise.race([currentSub(), new Promise((r) => setTimeout(() => r(null), 300))])
+		if (!sub) return
+		fetch("/api/me/push/off", {
+			method: "POST",
+			keepalive: true,
+			headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+			body: JSON.stringify({ endpoint: sub.endpoint }),
+		}).catch(() => {})
+		sub.unsubscribe().catch(() => {})
+	} catch {}
 }

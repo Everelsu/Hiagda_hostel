@@ -707,3 +707,25 @@ test("пуш-подписка: ключ выдаётся, мусор откло�
 	assert.equal((await call("POST", "/me/push", { token: me, body: sub })).status, 200, "повторная подписка не падает на уникальности")
 	assert.equal((await call("POST", "/me/push/off", { token: me, body: { endpoint: sub.endpoint } })).status, 200)
 })
+
+test("заявка: фото в переписке, закрытая — только чтение, админ удаляет", async () => {
+	const acc = await call("POST", `/residents/${residentId}/account`, { token: adminToken })
+	const me = (await call("POST", "/login", { body: { username: acc.json.username, password: acc.json.password } })).json.token
+	const ov = (await call("GET", "/me/overview", { token: me })).json
+	const created = await call("POST", "/me/issues", { token: me, body: { room_id: ov.room.id, amenity_name: "Кран", comment: "капает" } })
+	const id = created.json.id
+
+	assert.equal((await call("POST", `/issues/${id}/comments`, { token: me, body: { photo: "/uploads/a.jpg" } })).status, 200, "фото без текста — можно")
+	assert.equal((await call("POST", `/issues/${id}/comments`, { token: me, body: { photo: "http://evil/x.jpg" } })).status, 400)
+	const list = (await call("GET", `/issues/${id}/comments`, { token: me })).json
+	assert.equal(list.at(-1).photo, "/uploads/a.jpg")
+	assert.equal(list.at(-1).author_staff, false)
+
+	await call("PUT", `/issues/${id}/status`, { token: adminToken, body: { status: "Починено" } })
+	assert.equal((await call("POST", `/issues/${id}/comments`, { token: me, body: { text: "ещё" } })).status, 409, "вахтовик не пишет в закрытую")
+	assert.equal((await call("POST", `/issues/${id}/comments`, { token: adminToken, body: { text: "ещё" } })).status, 409, "и персонал тоже")
+
+	assert.equal((await call("DELETE", `/issues/${id}`, { token: me })).status, 403, "вахтовик удалить не может")
+	assert.equal((await call("DELETE", `/issues/${id}`, { token: adminToken })).status, 200)
+	assert.ok(!(await call("GET", "/me/issues", { token: me })).json.some((i) => i.id === id))
+})

@@ -415,6 +415,8 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 	auth       TEXT NOT NULL,
 	created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
 );
+-- Фото в переписке по заявке
+ALTER TABLE issue_comments ADD COLUMN IF NOT EXISTS photo TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_statuses_stage ON statuses(stage) WHERE stage IS NOT NULL;
 UPDATE statuses SET stage = 'expected'
  WHERE id = (SELECT MIN(id) FROM statuses WHERE kind = 'booking' AND stage IS NULL AND name ILIKE '%брон%')

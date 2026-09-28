@@ -1,5 +1,5 @@
 import { defineStore } from "pinia"
-import { post, setToken } from "@/api/client"
+import { post, setToken, getToken } from "@/api/client"
 import { connectRealtime, disconnectRealtime } from "@/realtime"
 import { dropPushOnLogout } from "@/utils/push"
 
@@ -45,12 +45,16 @@ export const useAuthStore = defineStore("auth", {
 				localStorage.setItem("noch_user", JSON.stringify(this.user))
 			}
 		},
-		logout() {
-			dropPushOnLogout()
+		// Выход — полной перезагрузкой на страницу входа: не перерисовываем тяжёлую текущую
+		// страницу без пользователя (отсюда и были «лаги») и не тащим кэш данных прошлой учётки
+		// в следующую (кабинет, лента, заявки).
+		async logout() {
+			const token = getToken()
 			setToken(null)
 			localStorage.removeItem("noch_user")
-			this.user = null
 			disconnectRealtime()
+			await dropPushOnLogout(token)
+			location.replace("/login")
 		},
 	},
 })
