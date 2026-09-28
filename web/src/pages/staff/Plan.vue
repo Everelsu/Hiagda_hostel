@@ -104,7 +104,7 @@ async function onPhoto(e) {
 	if (!file) return
 	uploadingPhoto.value = true
 	try {
-		const url = await uploadFile(file)
+		const url = await uploadFile(file, { maxSide: 3000 }) // мелкие подписи на плане эвакуации должны читаться
 		await put("/plan/image", { hotel_id: hotelId.value, floor: floor.value, url })
 		images.value = { ...images.value, [floor.value]: url }
 		toast.success("Фото плана этажа сохранено")

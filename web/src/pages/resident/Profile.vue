@@ -73,7 +73,7 @@ async function onFile(e) {
 	if (!file) return
 	uploading.value = true
 	try {
-		photo.value = await uploadFile(file)
+		photo.value = await uploadFile(file, { maxSide: 512 })
 		toast.success("Фото загружено — не забудьте сохранить")
 	} catch (err) {
 		toast.error(err.message)

@@ -59,7 +59,35 @@ export const post = (p, body) => api(p, { method: "POST", body: JSON.stringify(b
 export const put = (p, body) => api(p, { method: "PUT", body: JSON.stringify(body) })
 export const del = (p) => api(p, { method: "DELETE" })
 
-export async function uploadFile(file) {
+// Фото с телефона (3–8 МБ) ужимаем прямо в браузере: длинная сторона до maxSide,
+// WebP (где браузер не умеет его сохранять, например Safari, — JPEG). Выходит 150–400 КБ:
+// быстро грузится по слабой связи и не раздувает бэкапы. GIF/SVG и уже маленькие — как есть.
+async function shrinkImage(file, maxSide) {
+	if (!/^image\/(jpeg|png|webp|heic|heif)$/i.test(file.type) || typeof createImageBitmap !== "function") return file
+	let bmp
+	try {
+		bmp = await createImageBitmap(file, { imageOrientation: "from-image" }) // поворот по EXIF
+	} catch {
+		return file // формат, который браузер не открывает (HEIC в Chrome) — пусть решает сервер
+	}
+	const k = Math.min(1, maxSide / Math.max(bmp.width, bmp.height))
+	if (k === 1 && file.size < 400 * 1024) return bmp.close(), file
+	const c = document.createElement("canvas")
+	c.width = Math.round(bmp.width * k)
+	c.height = Math.round(bmp.height * k)
+	c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height)
+	bmp.close()
+	const toBlob = (type, q) => new Promise((ok) => c.toBlob(ok, type, q))
+	let blob = await toBlob("image/webp", 0.82)
+	if (blob?.type !== "image/webp") blob = await toBlob("image/jpeg", 0.85)
+	if (!blob || blob.size >= file.size) return file
+	const ext = blob.type === "image/webp" ? "webp" : "jpg"
+	return new File([blob], file.name.replace(/\.[^.]+$/, "") + "." + ext, { type: blob.type })
+}
+
+// maxSide: 1600 — фото заявок и номеров; план этажа — крупнее (мелкий текст), аватар — меньше
+export async function uploadFile(file, { maxSide = 1600 } = {}) {
+	file = await shrinkImage(file, maxSide)
 	const fd = new FormData()
 	fd.append("file", file)
 	const r = await api("/upload", { method: "POST", body: fd })
