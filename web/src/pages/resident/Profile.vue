@@ -6,6 +6,7 @@ import Icon from "@/components/Icon.vue"
 import { useRouter } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
 import { theme, setTheme } from "@/utils/theme"
+import { pushState, enablePush, disablePush, needsHomeScreen } from "@/utils/push"
 import { PageHeader, Card, Field, Input, Textarea, Button, Switch, Avatar, SegmentedControl, confirm } from "@/ui"
 
 const router = useRouter()
@@ -51,6 +52,24 @@ const stayState = (p) => (p.date_from > today ? "впереди" : p.date_to < t
 const totals = computed(() => ({ count: stays.value.length, nights: stays.value.reduce((a, p) => a + nights(p), 0) }))
 const d = (x) => new Date(x + "T00:00:00").toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" })
 const tel = (p) => "tel:" + String(p).replace(/[^d+]/g, "")
+
+/* ---------- уведомления на это устройство ---------- */
+const push = ref("off")
+const pushBusy = ref(false)
+onMounted(async () => (push.value = await pushState()))
+async function togglePush(on) {
+	pushBusy.value = true
+	try {
+		if (on) await enablePush()
+		else await disablePush()
+		toast.success(on ? "Уведомления включены" : "Уведомления выключены")
+	} catch (e) {
+		toast.error(e.message)
+	} finally {
+		push.value = await pushState()
+		pushBusy.value = false
+	}
+}
 
 async function onFile(e) {
 	const file = e.target.files?.[0]
@@ -139,6 +158,16 @@ async function changePassword() {
 			</div>
 			<Field label="О себе"><Textarea v-model="about" :rows="3" placeholder="Пара слов: откуда, чем увлекаетесь" /></Field>
 			<Button variant="primary" icon="check" :loading="savingProfile" @click="saveProfile">Сохранить</Button>
+		</Card>
+
+		<Card title="Уведомления" subtitle="Объявления коменданта и ответы по заявкам — даже когда кабинет закрыт" stack class="k-rise" style="--i: 3">
+			<p v-if="push === 'unsupported'" class="muted note">
+				{{ needsHomeScreen ? "На iPhone: «Поделиться» → «На экран Домой», откройте кабинет оттуда — и включите здесь." : "Этот браузер не умеет присылать уведомления." }}
+			</p>
+			<p v-else-if="push === 'denied'" class="muted note">Уведомления запрещены в настройках браузера для этого сайта. Разрешите их там — и включите здесь.</p>
+			<div v-else class="privacy">
+				<Switch :model-value="push === 'on'" :disabled="pushBusy" label="Присылать на это устройство" hint="На каждом телефоне или компьютере включается отдельно." @update:model-value="togglePush" />
+			</div>
 		</Card>
 
 		<Card title="Оформление" stack class="k-rise" style="--i: 3">
@@ -326,6 +355,10 @@ async function changePassword() {
 .call .muted {
 	margin-left: auto;
 	font-weight: 400;
+}
+.note {
+	margin: 0;
+	font-size: var(--font-size-sm);
 }
 .privacy {
 	padding: var(--gap-md);

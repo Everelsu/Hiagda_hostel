@@ -11,6 +11,7 @@ const multer = require("multer")
 const ExcelJS = require("exceljs")
 
 const db = require("./db")
+const push = require("./push")
 const { sign, authenticate, requireRole, requireStaff, requireRepair, canRepair } = require("./auth")
 const { createRealtimeServer, STAFF_ROLES } = require("./realtime")
 const { detectColumns, isFio, titleCase } = require("./residents-import")
@@ -364,7 +365,7 @@ api.get("/me/overview", async (req, res) => {
 					`SELECT id, rating, text, reply, reply_at, created_at, CASE WHEN room_id IS NULL THEN 'hotel' ELSE 'room' END AS target
 					 FROM reviews
 					 WHERE resident_id IS DISTINCT FROM ? AND (room_id = ? OR (hotel_id = ? AND room_id IS NULL))
-					 ORDER BY created_at DESC LIMIT 40`,
+					 ORDER BY created_at DESC LIMIT 200`,
 				)
 				.all(rid, pl.room_id, pl.hotel_id)
 		: []
@@ -490,6 +491,16 @@ async function myIssues(user) {
 		.all(user.id, user.id, pl?.room_id ?? -1)
 }
 // Может ли вахтовик видеть заявку и писать в неё: своя или по его текущему номеру
+// Учётки вахтовиков, живущих в номере сейчас
+async function roomUserIds(roomId) {
+	const rows = await db
+		.prepare(
+			`SELECT DISTINCT u.id FROM users u JOIN placements p ON p.resident_id = u.resident_id JOIN beds b ON b.id = p.bed_id
+			 WHERE b.room_id = ? AND p.stage <> 'cancelled' AND ? BETWEEN p.date_from AND p.date_to`,
+		)
+		.all(roomId, todayStr())
+	return rows.map((r) => r.id)
+}
 async function issueVisibleToResident(issue, user) {
 	if (issue.user_id === user.id) return true
 	const pl = user.resident_id ? await activePlacement(user.resident_id) : null
@@ -517,21 +528,9 @@ api.get("/me/feed", async (req, res) => {
 	const hotel = pl
 		? await db.prepare("SELECT id, name, settlement, address, phone, check_in, check_out FROM hotels WHERE id = ?").get(pl.hotel_id)
 		: null
-	// Отзывы прошлых и нынешних жильцов об этом номере и доме — без имён (комендант может удалить)
-	const reviews = pl
-		? await db
-				.prepare(
-					`SELECT id, rating, text, reply, reply_at, created_at, CASE WHEN room_id IS NULL THEN 'hotel' ELSE 'room' END AS target
-					 FROM reviews
-					 WHERE resident_id IS DISTINCT FROM ? AND (room_id = ? OR (hotel_id = ? AND room_id IS NULL))
-					 ORDER BY created_at DESC LIMIT 40`,
-				)
-				.all(rid, pl.room_id, pl.hotel_id)
-		: []
 	res.json({
 		resident,
 		placement: pl || null,
-		reviews,
 		stay: staySummary(pl),
 		hotel,
 		announcements,
@@ -543,6 +542,24 @@ api.get("/me/feed", async (req, res) => {
 })
 
 api.get("/me/issues", async (req, res) => res.json(await myIssues(req.user)))
+
+// Пуш-уведомления: ключ для подписки, подписать/отписать это устройство
+api.get("/me/push", async (_req, res) => res.json({ key: await push.publicKey() }))
+api.post("/me/push", async (req, res) => {
+	const { endpoint, keys } = req.body || {}
+	if (!String(endpoint || "").startsWith("https://") || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: "Неверная подписка" })
+	await db
+		.prepare(
+			`INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES (?,?,?,?)
+			 ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+		)
+		.run(req.user.id, endpoint, keys.p256dh, keys.auth)
+	res.json({ ok: true })
+})
+api.post("/me/push/off", async (req, res) => {
+	await db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?").run(req.body?.endpoint || "", req.user.id)
+	res.json({ ok: true })
+})
 
 // История вахт: где и когда жил (без отменённых) — для профиля
 api.get("/me/stays", async (req, res) => {
@@ -613,18 +630,16 @@ api.post("/issues/:id/comments", async (req, res) => {
 	if (!text) return res.status(400).json({ error: "Введите сообщение" })
 	const info = await db.prepare("INSERT INTO issue_comments (issue_id, user_id, text) VALUES (?,?,?)").run(req.params.id, req.user.id, text)
 	// Заявка общая на номер — сообщение видят и те, кто живёт в нём сейчас
-	const today = todayStr()
-	const mates = new Set(
-		(
-			await db
-				.prepare(
-					`SELECT u.id FROM users u JOIN placements p ON p.resident_id = u.resident_id JOIN beds b ON b.id = p.bed_id
-					 WHERE b.room_id = ? AND p.stage <> 'cancelled' AND ? BETWEEN p.date_from AND p.date_to`,
-				)
-				.all(issue.room_id, today)
-		).map((r) => r.id),
-	)
-	broadcast("issue:comment", { issueId: Number(req.params.id) }, (user) => STAFF_ROLES.has(user.role) || user.id === issue.user_id || mates.has(user.id))
+	const mates = await roomUserIds(issue.room_id)
+	broadcast("issue:comment", { issueId: Number(req.params.id) }, (user) => STAFF_ROLES.has(user.role) || user.id === issue.user_id || mates.includes(user.id))
+	// Ответ коменданта — пушем автору и соседям
+	if (isStaffUser(req.user))
+		push.notify([issue.user_id, ...mates].filter((id) => id !== req.user.id), {
+			title: "Ответ по заявке",
+			body: text.length > 140 ? text.slice(0, 140) + "…" : text,
+			url: "/me/issues",
+			tag: "issue-" + req.params.id,
+		})
 	res.json({ id: info.lastInsertRowid })
 })
 
@@ -709,6 +724,17 @@ api.post("/announcements", requireRole("editor"), async (req, res) => {
 		.prepare("INSERT INTO announcements (hotel_id, title, body, pinned, created_by) VALUES (?,?,?,?,?)")
 		.run(hotel_id || null, title, body, pinned ? 1 : 0, req.user.id)
 	broadcast("announcements:changed", { hotelId: hotel_id || null })
+	const to = await db
+		.prepare(
+			`SELECT DISTINCT u.id FROM users u JOIN placements p ON p.resident_id = u.resident_id
+			 JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
+			 WHERE p.stage <> 'cancelled' AND p.date_to >= ? AND (?::int IS NULL OR rm.hotel_id = ?)`,
+		)
+		.all(todayStr(), hotel_id || null, hotel_id || null)
+	push.notify(
+		to.map((r) => r.id),
+		{ title: "📢 " + title, body: body.length > 140 ? body.slice(0, 140) + "…" : body, url: "/me", tag: "ann-" + info.lastInsertRowid },
+	)
 	res.json({ id: info.lastInsertRowid })
 })
 api.put("/announcements/:id", requireRole("editor"), async (req, res) => {
@@ -2305,9 +2331,16 @@ api.put("/issues/:id/status", requireRepair, async (req, res) => {
 	if (!ISSUE_STATUSES.includes(status)) {
 		return res.status(400).json({ error: `Недопустимый статус заявки. Допустимые: ${ISSUE_STATUSES.join(", ")}` })
 	}
-	const issue = await db.prepare("SELECT user_id FROM room_issues WHERE id = ?").get(req.params.id)
+	const issue = await db.prepare("SELECT user_id, room_id, amenity_name, status FROM room_issues WHERE id = ?").get(req.params.id)
 	if (!issue) return res.status(404).json({ error: "Заявка не найдена" })
 	await db.prepare("UPDATE room_issues SET status = ? WHERE id = ?").run(status, req.params.id)
+	if (status !== issue.status)
+		push.notify([issue.user_id, ...(await roomUserIds(issue.room_id))].filter((id) => id !== req.user.id), {
+			title: { Починено: "✅ Починили", "В работе": "🔧 Заявку взяли в работу" }[status] || "Заявка снова открыта",
+			body: `${issue.amenity_name || "Заявка"}: ${status.toLowerCase()}`,
+			url: "/me/issues",
+			tag: "issue-" + req.params.id,
+		})
 	broadcast("issues:changed", { issueId: Number(req.params.id) }, (user) => STAFF_ROLES.has(user.role) || user.id === issue?.user_id)
 	res.json({ ok: true })
 });

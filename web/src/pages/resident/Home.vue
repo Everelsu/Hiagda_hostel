@@ -4,6 +4,8 @@ import { loadFeed, feed, markAnnouncementsSeen } from "@/api/me"
 import Icon from "@/components/Icon.vue"
 import { CountUp } from "@/ui"
 import IssueSteps from "@/components/IssueSteps.vue"
+import { pushState, enablePush } from "@/utils/push"
+import { toast } from "@/toast"
 
 const loading = ref(true)
 const seenAt = ref(null) // запоминаем до отметки «прочитано», чтобы подсветить новые
@@ -56,6 +58,35 @@ const short = (d) => (d ? new Date(d + "T00:00:00").toLocaleDateString("ru-RU", 
 const longDate = (d) => (d ? new Date(String(d).replace(" ", "T") + "Z").toLocaleDateString("ru-RU", { day: "numeric", month: "long" }) : "")
 const tel = (p) => "tel:" + String(p).replace(/[^\d+]/g, "")
 
+
+// Предложение включить уведомления: один раз, пока не включили и не закрыли
+const askPush = ref(false)
+const pushBusy = ref(false)
+onMounted(async () => {
+	let hidden = false
+	try {
+		hidden = localStorage.getItem("noch_push_ask") === "no"
+	} catch {}
+	askPush.value = !hidden && (await pushState()) === "off"
+})
+function hidePushAsk() {
+	askPush.value = false
+	try {
+		localStorage.setItem("noch_push_ask", "no")
+	} catch {}
+}
+async function turnOnPush() {
+	pushBusy.value = true
+	try {
+		await enablePush()
+		askPush.value = false
+		toast.success("Готово — объявления и ответы по заявкам придут уведомлением")
+	} catch (e) {
+		toast.error(e.message)
+	} finally {
+		pushBusy.value = false
+	}
+}
 </script>
 
 <template>
@@ -119,6 +150,15 @@ const tel = (p) => "tel:" + String(p).replace(/[^\d+]/g, "")
 				</template>
 			</section>
 
+			<Transition name="ask">
+				<section v-if="askPush" class="ask k-rise" style="--i: 2">
+					<span class="ask__ic"><Icon name="bell" size="1.2rem" /></span>
+					<span class="ask__text"><b>Включить уведомления?</b><small>Объявления коменданта и ответы по заявкам придут, даже когда кабинет закрыт</small></span>
+					<button type="button" class="ask__on" :disabled="pushBusy" @click="turnOnPush">Включить</button>
+					<button type="button" class="ask__x" aria-label="Не сейчас" @click="hidePushAsk"><Icon name="x" size="1rem" /></button>
+				</section>
+			</Transition>
+
 			<!-- Быстрые действия: всё главное в одно касание -->
 			<section class="actions">
 				<router-link v-if="pl" :to="{ path: '/me/issues', query: { new: 1 } }" class="act act--main k-rise" style="--i: 2">
@@ -180,6 +220,66 @@ const tel = (p) => "tel:" + String(p).replace(/[^\d+]/g, "")
 </template>
 
 <style scoped>
+.ask {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-md);
+	padding: var(--gap-md);
+	border-radius: var(--radius-lg);
+	border: 1px solid color-mix(in srgb, var(--color-brand) 35%, var(--color-divider));
+	background: var(--color-brand-highlight);
+}
+.ask__ic {
+	display: grid;
+	place-items: center;
+	width: 2.4rem;
+	height: 2.4rem;
+	border-radius: 50%;
+	background: var(--color-brand);
+	color: var(--color-accent-contrast);
+	flex-shrink: 0;
+}
+.ask__text {
+	flex: 1;
+	min-width: 0;
+	display: grid;
+	font-size: var(--font-size-sm);
+}
+.ask__text b {
+	color: var(--color-contrast);
+}
+.ask__text small {
+	color: var(--color-secondary);
+}
+.ask__on {
+	padding: 8px 14px;
+	border: none;
+	border-radius: 999px;
+	background: var(--color-brand);
+	color: var(--color-accent-contrast);
+	font: inherit;
+	font-size: var(--font-size-sm);
+	font-weight: var(--font-weight-bold);
+	cursor: pointer;
+}
+.ask__x {
+	display: grid;
+	place-items: center;
+	width: 2rem;
+	height: 2rem;
+	border: none;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--color-secondary);
+	cursor: pointer;
+}
+.ask-leave-active {
+	transition: opacity 200ms ease, transform 200ms ease;
+}
+.ask-leave-to {
+	opacity: 0;
+	transform: scale(0.97);
+}
 .home {
 	display: grid;
 	gap: var(--gap-lg);

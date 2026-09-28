@@ -4,7 +4,8 @@ import { useRouter, useRoute } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
 import { post } from "@/api/client"
 import { toast } from "@/toast"
-import { loadFeed, unread } from "@/api/me"
+import { loadFeed, unread, feed } from "@/api/me"
+import { onRealtime } from "@/realtime"
 import { theme, toggleTheme } from "@/utils/theme"
 import { useIndicator } from "@/ui/useIndicator"
 import Icon from "@/components/Icon.vue"
@@ -53,7 +54,25 @@ onMounted(() => {
 	ro = new ResizeObserver(measure)
 	ro.observe(top.value)
 })
-onUnmounted(() => ro?.disconnect())
+// Новое объявление или движение по заявке — сразу видно, без обновления страницы
+const stopRealtime = onRealtime(async (e) => {
+	if (!auth.user?.resident_id) return
+	if (e.type === "announcements:changed") {
+		const before = unread.value
+		await loadFeed(true).catch(() => {})
+		if (unread.value > before && route.path !== "/me") {
+			const a = feed.value?.announcements?.[0]
+			toast.action(`Новое объявление${a ? ": " + a.title : ""}`, "Открыть", () => router.push("/me"), "info")
+		}
+	} else if (e.type === "issues:changed" && !route.path.startsWith("/me/issues")) {
+		loadFeed(true).catch(() => {})
+		toast.action("Заявка обновилась", "Посмотреть", () => router.push("/me/issues"), "info")
+	}
+})
+onUnmounted(() => {
+	ro?.disconnect()
+	stopRealtime()
+})
 
 function logout() {
 	auth.logout()

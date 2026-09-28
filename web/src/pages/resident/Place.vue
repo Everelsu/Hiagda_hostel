@@ -132,8 +132,15 @@ const openRoute = (app) => {
 
 /* ---------- отзывы: чужие (без имён) и своя оценка номера и дома ---------- */
 const others = computed(() => data.value?.reviews || [])
-const showAll = ref(false)
-const shownOthers = computed(() => (showAll.value ? others.value : others.value.slice(0, 3)))
+// Отзывов может быть много: фильтр «о номере / о доме», по 5 штук, длинный текст свёрнут
+const rvFilter = ref("")
+const rvLimit = ref(5)
+const opened = ref(new Set())
+const filteredOthers = computed(() => (rvFilter.value ? others.value.filter((r) => r.target === rvFilter.value) : others.value))
+const shownOthers = computed(() => filteredOthers.value.slice(0, rvLimit.value))
+watch(rvFilter, () => (rvLimit.value = 5))
+const toggleRv = (id) => (opened.value.has(id) ? opened.value.delete(id) : opened.value.add(id))
+const isLong = (t) => (t || "").length > 180
 const monthYear = (d) => (d ? new Date(String(d).replace(" ", "T") + "Z").toLocaleDateString("ru-RU", { month: "long", year: "numeric" }) : "")
 const rRoom = ref(0)
 const tRoom = ref("")
@@ -335,20 +342,29 @@ const short = (d) => (d ? new Date(d + "T00:00:00").toLocaleDateString("ru-RU", 
 					</div>
 				</div>
 				<p v-if="!others.length" class="muted">Другие жильцы пока ничего не написали — будьте первым.</p>
-				<TransitionGroup v-else tag="div" name="rv" class="reviews">
+				<div v-if="others.length > 3" class="chips">
+					<button type="button" :class="{ on: !rvFilter }" @click="rvFilter = ''">Все · {{ others.length }}</button>
+					<button type="button" :class="{ on: rvFilter === 'room' }" @click="rvFilter = 'room'">О номере</button>
+					<button type="button" :class="{ on: rvFilter === 'hotel' }" @click="rvFilter = 'hotel'">О доме</button>
+				</div>
+				<TransitionGroup v-if="others.length" tag="div" name="rv" class="reviews">
 					<article v-for="r in shownOthers" :key="r.id" class="rv">
 						<div class="rv__head">
 							<span class="rv__tag">{{ r.target === "room" ? "о номере" : "о доме" }}</span>
 							<Stars :model-value="r.rating" readonly size="0.95rem" />
 							<span class="muted rv__date">{{ monthYear(r.created_at) }}</span>
 						</div>
-						<p v-if="r.text">{{ r.text }}</p>
+						<p v-if="r.text" :class="{ clamp: isLong(r.text) && !opened.has(r.id) }">{{ r.text }}</p>
+						<button v-if="isLong(r.text)" type="button" class="more-btn" @click="toggleRv(r.id)">{{ opened.has(r.id) ? "свернуть" : "читать целиком" }}</button>
 						<div v-if="r.reply" class="reply"><b>Комендант</b>{{ r.reply }}</div>
 					</article>
 				</TransitionGroup>
-				<button v-if="others.length > 3" type="button" class="more-btn" @click="showAll = !showAll">
-					{{ showAll ? "Свернуть" : `Показать все (${others.length})` }}
-				</button>
+				<p v-if="others.length && !filteredOthers.length" class="muted">Таких отзывов пока нет.</p>
+				<div v-if="filteredOthers.length > 5" class="rv-more">
+					<span class="muted">Показано {{ shownOthers.length }} из {{ filteredOthers.length }}</span>
+					<button v-if="rvLimit < filteredOthers.length" type="button" class="more-btn" @click="rvLimit += 5">Показать ещё</button>
+					<button v-else type="button" class="more-btn" @click="rvLimit = 5">Свернуть</button>
+				</div>
 
 				<h3>Ваша оценка</h3>
 				<p class="muted hint">Отзыв увидят следующие жильцы — без вашего имени. Комендант ответит здесь же.</p>
@@ -814,6 +830,23 @@ const short = (d) => (d ? new Date(d + "T00:00:00").toLocaleDateString("ru-RU", 
 .rv__date {
 	margin-left: auto;
 	font-size: var(--font-size-xs);
+}
+.rv p {
+	margin: 0;
+	white-space: pre-line;
+}
+.rv p.clamp {
+	display: -webkit-box;
+	-webkit-line-clamp: 4;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+.rv-more {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--gap-md);
+	font-size: var(--font-size-sm);
 }
 .rv-enter-active {
 	transition: opacity 240ms ease, transform 240ms cubic-bezier(0.2, 0.7, 0.2, 1);

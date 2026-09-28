@@ -692,3 +692,18 @@ test("отзывы видны следующим жильцам без имен�
 	assert.equal((await call("DELETE", `/residents/${a.id}/photo`, { token: adminToken })).status, 200)
 	assert.equal((await call("GET", "/me/overview", { token: a.token })).json.resident.photo, null)
 })
+
+test("пуш-подписка: ключ выдаётся, мусор отклоняется, подписка ставится и снимается", async () => {
+	const acc = await call("POST", `/residents/${residentId}/account`, { token: adminToken })
+	const me = (await call("POST", "/login", { body: { username: acc.json.username, password: acc.json.password } })).json.token
+	const key = await call("GET", "/me/push", { token: me })
+	assert.equal(key.status, 200)
+	assert.match(key.json.key, /^[A-Za-z0-9_-]{80,}$/, "публичный VAPID-ключ в base64url")
+	assert.equal((await call("GET", "/me/push", { token: me })).json.key, key.json.key, "ключ не меняется между запросами")
+
+	assert.equal((await call("POST", "/me/push", { token: me, body: { endpoint: "http://evil", keys: {} } })).status, 400)
+	const sub = { endpoint: "https://push.example.invalid/abc", keys: { p256dh: "x", auth: "y" } }
+	assert.equal((await call("POST", "/me/push", { token: me, body: sub })).status, 200)
+	assert.equal((await call("POST", "/me/push", { token: me, body: sub })).status, 200, "повторная подписка не падает на уникальности")
+	assert.equal((await call("POST", "/me/push/off", { token: me, body: { endpoint: sub.endpoint } })).status, 200)
+})

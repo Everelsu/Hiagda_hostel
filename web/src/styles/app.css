@@ -70,6 +70,8 @@ table,
 }
 html {
 	-webkit-tap-highlight-color: transparent;
+	/* Без «резинки» у края страницы: иначе при рывке вверх съезжает и закреплённая шапка */
+	overscroll-behavior-y: none;
 }
 
 /* Кнопки */

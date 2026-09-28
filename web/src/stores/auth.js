@@ -1,6 +1,7 @@
 import { defineStore } from "pinia"
 import { post, setToken } from "@/api/client"
 import { connectRealtime, disconnectRealtime } from "@/realtime"
+import { dropPushOnLogout } from "@/utils/push"
 
 // Персонал: observer (только просмотр) < editor < admin. viewer — вахтовик, не персонал.
 // maintenance (ремонтник) — сотрудник вне лестницы: по правке номерного фонда и броней
@@ -45,6 +46,7 @@ export const useAuthStore = defineStore("auth", {
 			}
 		},
 		logout() {
+			dropPushOnLogout()
 			setToken(null)
 			localStorage.removeItem("noch_user")
 			this.user = null

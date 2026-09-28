@@ -1,11 +1,11 @@
 <script setup>
 const model = defineModel({ type: Boolean, default: false })
-defineProps({ label: String, hint: String })
+defineProps({ label: String, hint: String, disabled: Boolean })
 </script>
 
 <template>
 	<label class="k-switch">
-		<button type="button" role="switch" :aria-checked="model" class="k-switch__track" :class="{ on: model }" @click="model = !model">
+		<button type="button" role="switch" :aria-checked="model" class="k-switch__track" :class="{ on: model }" :disabled="disabled" @click="model = !model">
 			<span class="k-switch__thumb" />
 		</button>
 		<span v-if="label || hint" class="k-switch__text">
@@ -16,6 +16,10 @@ defineProps({ label: String, hint: String })
 </template>
 
 <style scoped>
+.k-switch__track:disabled {
+	opacity: 0.55;
+	cursor: progress;
+}
 .k-switch {
 	display: flex;
 	align-items: flex-start;
