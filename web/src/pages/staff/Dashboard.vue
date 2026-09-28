@@ -339,7 +339,7 @@ const plural = (n, one, few, many) => {
 	font-size: 1.6rem;
 	line-height: 1.1;
 }
-.today__num span {
+.today__num > span {
 	font-size: var(--font-size-xs);
 	color: var(--color-secondary);
 }

@@ -76,12 +76,15 @@ function onLocated(e) {
 
 // Во весь экран — удобно разглядывать посёлок
 const full = ref(false)
+// На телефоне один палец листает страницу, карту двигают двумя (во весь экран — одним)
+const TOUCH = matchMedia("(pointer: coarse)").matches
 function toggleFull() {
 	if (document.fullscreenElement) document.exitFullscreen()
 	else wrap.value?.requestFullscreen?.()
 }
 function onFsChange() {
 	full.value = document.fullscreenElement === wrap.value
+	if (TOUCH) map?.dragging[full.value ? "enable" : "disable"]()
 	setTimeout(() => map?.invalidateSize(), 100)
 }
 let layer = null
@@ -206,7 +209,7 @@ function focusSelected() {
 
 onMounted(async () => {
 	await nextTick()
-	map = L.map(el.value, { scrollWheelZoom: true }).setView(props.center, props.zoom)
+	map = L.map(el.value, { scrollWheelZoom: true, dragging: !TOUCH }).setView(props.center, props.zoom)
 	map.attributionControl.setPrefix(false)
 	setLayer(layerName.value)
 	L.control.scale({ imperial: false, position: "bottomleft" }).addTo(map)
@@ -295,6 +298,8 @@ onBeforeUnmount(() => {
 }
 .noch-map-wrap {
 	position: relative;
+	/* кнопки карты не вылезают поверх закреплённых шапок страницы */
+	isolation: isolate;
 }
 .noch-map-wrap.full {
 	background: #000;

@@ -110,12 +110,15 @@ function setType(t) {
 	} catch {}
 }
 const zoomBy = (d) => map?.setZoom(map.getZoom() + d, { duration: 200 })
+// На телефоне один палец листает страницу, карту двигают двумя (во весь экран — одним)
+const TOUCH = matchMedia("(pointer: coarse)").matches
 function toggleFull() {
 	if (document.fullscreenElement) document.exitFullscreen()
 	else wrap.value?.requestFullscreen?.()
 }
 function onFs() {
 	full.value = document.fullscreenElement === wrap.value
+	if (TOUCH) map?.behaviors[full.value ? "enable" : "disable"]("drag")
 	setTimeout(() => map?.container.fitToViewport(), 100)
 }
 function locate() {
@@ -150,6 +153,7 @@ onMounted(async () => {
 		},
 		{ suppressMapOpenBlock: true, yandexMapDisablePoiInteractivity: true },
 	)
+	if (TOUCH) map.behaviors.disable("drag")
 	try {
 		const t = localStorage.getItem("ymap_type")
 		if (TYPES[t]) setType(t)
@@ -204,10 +208,10 @@ onBeforeUnmount(() => {
 			<button v-for="(label, k) in TYPES" :key="k" type="button" :class="{ on: type === k }" @click="setType(k)">{{ label }}</button>
 		</div>
 		<div class="noch-map__tools ymap__tools">
-			<button type="button" title="Приблизить" @click="zoomBy(1)">
+			<button type="button" class="zoom-btn" title="Приблизить" @click="zoomBy(1)">
 				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
 			</button>
-			<button type="button" title="Отдалить" @click="zoomBy(-1)">
+			<button type="button" class="zoom-btn" title="Отдалить" @click="zoomBy(-1)">
 				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14" /></svg>
 			</button>
 			<button type="button" :title="locating ? 'Определяем…' : 'Где я'" :class="{ spin: locating }" @click="locate">
@@ -223,6 +227,14 @@ onBeforeUnmount(() => {
 <style>
 .ymap-wrap {
 	position: relative;
+	/* кнопки карты не вылезают поверх закреплённых шапок страницы */
+	isolation: isolate;
+}
+/* На сенсорном экране масштаб — щипком, кнопки +/− лишние */
+@media (pointer: coarse) {
+	.ymap__tools .zoom-btn {
+		display: none !important;
+	}
 }
 .ymap-wrap.full {
 	background: #000;

@@ -38,9 +38,9 @@ const VIEW = [
 
 <template>
 	<div class="grid">
-		<PageHeader title="План этажа" icon="layout" back="/me/room" />
+		<PageHeader title="План этажа" icon="layout" back="/me/place#floor" />
 
-		<Card v-if="loading"><EmptyState icon="layout" text="Загрузка…" /></Card>
+		<div v-if="loading" class="res-skel"><span /><span /><span /></div>
 		<Card v-else-if="!data?.available">
 			<EmptyState icon="layout" title="Плана пока нет" text="Комендант ещё не начертил схему этажа для этого дома." />
 		</Card>

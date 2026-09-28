@@ -624,3 +624,71 @@ test("фото плана этажа: ставится, отдаётся в /pla
 	await call("PUT", "/plan/image", { token: adminToken, body: { hotel_id: h, floor: 3, url: null } })
 	assert.equal((await call("GET", `/plan?hotel_id=${h}`, { token: adminToken })).json.images[3], undefined)
 })
+
+test("заявка общая на номер: сосед видит открытую и пишет в неё, чужие — нет", async () => {
+	const hotels = await call("GET", "/hotels", { token: adminToken })
+	const room = await call("POST", "/rooms", { token: adminToken, body: { hotel_id: hotels.json[0].id, number: "202", capacity: 2 } })
+	const beds = (await call("GET", `/rooms?hotel_id=${hotels.json[0].id}`, { token: adminToken })).json.find((r) => r.id === room.json.id).beds
+	const day = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10)
+	const tokens = []
+	for (const [i, name] of ["Петров Пётр Петрович", "Сидоров Сидор Сидорович"].entries()) {
+		const r = await call("POST", "/residents", { token: adminToken, body: { full_name: name } })
+		await call("POST", "/placements", { token: adminToken, body: { bed_id: beds[i].id, resident_id: r.json.id, status_id: statusId, date_from: day(-2), date_to: day(10) } })
+		const acc = await call("POST", `/residents/${r.json.id}/account`, { token: adminToken })
+		tokens.push((await call("POST", "/login", { body: { username: acc.json.username, password: acc.json.password } })).json.token)
+	}
+	const [a, b] = tokens
+	const created = await call("POST", "/me/issues", { token: a, body: { room_id: room.json.id, amenity_name: "Душ", comment: "нет горячей воды" } })
+	assert.equal(created.status, 200)
+
+	const seen = (await call("GET", "/me/issues", { token: b })).json.find((i) => i.id === created.json.id)
+	assert.ok(seen, "сосед видит заявку по своему номеру")
+	assert.equal(seen.mine, false)
+	assert.equal(seen.author, "Петров Пётр Петрович")
+	assert.equal((await call("POST", `/issues/${created.json.id}/comments`, { token: b, body: { text: "у меня тоже" } })).status, 200)
+
+	// Иванов живёт в другом номере — ни видеть, ни писать
+	const other = await call("POST", `/residents/${residentId}/account`, { token: adminToken })
+	const ivan = (await call("POST", "/login", { body: { username: other.json.username, password: other.json.password } })).json.token
+	assert.equal((await call("POST", `/issues/${created.json.id}/comments`, { token: ivan, body: { text: "эй" } })).status, 403)
+
+	// Починенная соседская заявка у соседа пропадает, у автора — остаётся в истории
+	await call("PUT", `/issues/${created.json.id}/status`, { token: adminToken, body: { status: "Починено" } })
+	assert.ok(!(await call("GET", "/me/issues", { token: b })).json.some((i) => i.id === created.json.id))
+	assert.ok((await call("GET", "/me/issues", { token: a })).json.some((i) => i.id === created.json.id))
+
+	const stays = await call("GET", "/me/stays", { token: a })
+	assert.equal(stays.json.length, 1)
+	assert.equal(stays.json[0].room_number, "202")
+})
+
+test("отзывы видны следующим жильцам без имени; админ удаляет; фото профиля снимается", async () => {
+	const hotels = await call("GET", "/hotels", { token: adminToken })
+	const room = await call("POST", "/rooms", { token: adminToken, body: { hotel_id: hotels.json[0].id, number: "303", capacity: 2 } })
+	const beds = (await call("GET", `/rooms?hotel_id=${hotels.json[0].id}`, { token: adminToken })).json.find((r) => r.id === room.json.id).beds
+	const day = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10)
+	const people = []
+	for (const [i, name] of ["Кузнецов Кузьма Кузьмич", "Орлов Олег Олегович"].entries()) {
+		const r = await call("POST", "/residents", { token: adminToken, body: { full_name: name } })
+		await call("POST", "/placements", { token: adminToken, body: { bed_id: beds[i].id, resident_id: r.json.id, status_id: statusId, date_from: day(-1), date_to: day(5) } })
+		const acc = await call("POST", `/residents/${r.json.id}/account`, { token: adminToken })
+		people.push({ id: r.json.id, token: (await call("POST", "/login", { body: { username: acc.json.username, password: acc.json.password } })).json.token })
+	}
+	const [a, b] = people
+	await call("POST", "/me/review", { token: a.token, body: { target: "room", rating: 1, text: "дует из окна" } })
+
+	const seen = (await call("GET", "/me/overview", { token: b.token })).json.reviews
+	const r = seen.find((x) => x.text === "дует из окна")
+	assert.ok(r, "сосед видит чужой отзыв о номере")
+	assert.equal(r.target, "room")
+	assert.ok(!("resident_name" in r) && !("resident_id" in r), "отзыв без имени автора")
+	assert.ok(!(await call("GET", "/me/overview", { token: a.token })).json.reviews.some((x) => x.id === r.id), "свой отзыв не дублируется в чужих")
+
+	assert.equal((await call("DELETE", `/reviews/${r.id}`, { token: adminToken })).status, 200)
+	assert.ok(!(await call("GET", "/me/overview", { token: b.token })).json.reviews.some((x) => x.id === r.id))
+
+	await call("PUT", "/me/profile", { token: a.token, body: { photo: "/uploads/x.jpg" } })
+	assert.equal((await call("DELETE", `/residents/${a.id}/photo`, { token: a.token })).status, 403, "вахтовик не снимает фото через админский метод")
+	assert.equal((await call("DELETE", `/residents/${a.id}/photo`, { token: adminToken })).status, 200)
+	assert.equal((await call("GET", "/me/overview", { token: a.token })).json.resident.photo, null)
+})

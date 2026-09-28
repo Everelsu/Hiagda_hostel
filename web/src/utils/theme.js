@@ -2,6 +2,7 @@
 // (View Transitions API). Где его нет — мягкий переход цветов. Один модуль на оба портала.
 import { ref } from "vue"
 
+let busy = false
 export const theme = ref(document.documentElement.getAttribute("data-theme") || "dark")
 
 function apply(next) {
@@ -17,7 +18,8 @@ function apply(next) {
 export function setTheme(next, from) {
 	if (next === theme.value) return
 	const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches
-	if (reduce) return apply(next)
+	// Вкладка не видна или переход уже идёт — меняем сразу, без анимации
+	if (reduce || document.visibilityState !== "visible" || busy) return apply(next)
 	if (!document.startViewTransition) {
 		const root = document.documentElement
 		root.classList.add("theme-anim")
@@ -28,7 +30,9 @@ export function setTheme(next, from) {
 	const x = from?.x ?? window.innerWidth - 40
 	const y = from?.y ?? 40
 	const r = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y))
+	busy = true
 	const t = document.startViewTransition(() => apply(next))
+	t.finished.finally(() => (busy = false))
 	t.ready
 		.then(() =>
 			document.documentElement.animate(

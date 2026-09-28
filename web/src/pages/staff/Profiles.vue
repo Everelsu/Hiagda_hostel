@@ -137,6 +137,19 @@ async function openProfile(r) {
 		stays.value = card.stays
 	} catch {}
 }
+// Снести неуместное фото профиля — вахтовик сможет поставить другое
+async function removePhoto() {
+	if (!(await confirm({ title: "Убрать фото профиля?", message: `Фото «${profile.value.full_name}» пропадёт у соседей и в списках. Вахтовик сможет загрузить новое.`, danger: true, confirmLabel: "Убрать фото" }))) return
+	try {
+		await del(`/residents/${profile.value.id}/photo`)
+		profile.value.photo = null
+		const row = residents.value.find((x) => x.id === profile.value.id)
+		if (row) row.photo = null
+		toast.success("Фото убрано")
+	} catch (e) {
+		toast.error(e.message)
+	}
+}
 async function saveProfile() {
 	if (!form.value.full_name.trim()) return toast.error("Укажите ФИО")
 	busy.value = true
@@ -381,7 +394,10 @@ const fmt = (d) => dateTime(d, { dateStyle: "medium" })
 		<Drawer v-if="profile" width="640px" @close="closeProfile">
 			<template #head>
 				<div v-if="profile.id" class="ph">
-					<Avatar :src="profile.photo" :name="profile.full_name" size="3.4rem" />
+					<span class="ph__ava">
+						<Avatar :src="profile.photo" :name="profile.full_name" size="3.4rem" />
+						<button v-if="profile.photo && canEdit" type="button" class="ph__rm" title="Убрать фото" aria-label="Убрать фото" @click="removePhoto"><Icon name="x" size="0.75rem" /></button>
+					</span>
 					<div class="ph__text">
 						<h3 class="ph__name">{{ profile.full_name }}</h3>
 						<div class="ph__sub">{{ [profile.position, profile.department].filter(Boolean).join(" · ") || "Должность не указана" }}</div>
@@ -583,6 +599,38 @@ const fmt = (d) => dateTime(d, { dateStyle: "medium" })
 	gap: var(--gap-md);
 	align-items: center;
 	min-width: 0;
+}
+.ph__ava {
+	position: relative;
+	flex-shrink: 0;
+}
+.ph__rm {
+	position: absolute;
+	top: -4px;
+	right: -4px;
+	display: grid;
+	place-items: center;
+	width: 1.4rem;
+	height: 1.4rem;
+	border-radius: 50%;
+	border: 2px solid var(--color-raised-bg);
+	background: var(--color-red);
+	color: #fff;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity var(--speed-fast), transform var(--speed-fast);
+}
+.ph__ava:hover .ph__rm,
+.ph__rm:focus-visible {
+	opacity: 1;
+}
+.ph__rm:hover {
+	transform: scale(1.1);
+}
+@media (hover: none) {
+	.ph__rm {
+		opacity: 1;
+	}
 }
 .ph__text {
 	min-width: 0;

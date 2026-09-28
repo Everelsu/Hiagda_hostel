@@ -228,6 +228,16 @@ async function replyReview(m, r) {
 		toast.error(e.message)
 	}
 }
+async function removeReview(m, r) {
+	if (!(await confirm({ title: "Удалить отзыв?", message: "Отзыв пропадёт у всех жильцов и из рейтинга. Вернуть его будет нельзя.", danger: true, confirmLabel: "Удалить отзыв" }))) return
+	try {
+		await del("/reviews/" + r.id)
+		toast.success("Отзыв удалён")
+		await loadReviews(m)
+	} catch (e) {
+		toast.error(e.message)
+	}
+}
 async function addHotelImg(m) {
 	if (!m._imgUrl?.trim() || !m.id) return
 	try {
@@ -498,6 +508,7 @@ onMounted(async () => {
 			</template>
 
 			<template v-else-if="hotelTab === 'reviews'">
+				<p class="muted" style="margin: 0 0 var(--gap-sm); font-size: var(--font-size-sm)">Отзывы видят жильцы этого дома (без имён). Грубое или не по делу — удаляйте.</p>
 				<EmptyState v-if="!hotelModal.reviews?.length" icon="message-square" text="Отзывов пока нет" />
 				<div v-for="r in hotelModal.reviews" :key="r.id" class="review">
 					<div class="spread">
@@ -506,7 +517,10 @@ onMounted(async () => {
 						<Chip v-if="r.room_number" color="var(--color-blue)" dot>№ {{ r.room_number }}</Chip>
 						<Chip v-else dot>о доме</Chip>
 					</span>
-					<Stars :model-value="r.rating" readonly />
+					<span class="row" style="gap: var(--gap-sm)">
+						<Stars :model-value="r.rating" readonly />
+						<IconButton icon="trash" label="Удалить отзыв" size="sm" variant="danger" @click="removeReview(hotelModal, r)" />
+					</span>
 				</div>
 					<div v-if="r.text" style="font-size: var(--font-size-sm)">{{ r.text }}</div>
 					<div class="row" style="margin-top: 4px"><Input v-model="r._reply" placeholder="Ответ администрации…" /><Button size="sm" @click="replyReview(hotelModal, r)">Ответить</Button></div>

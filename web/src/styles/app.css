@@ -381,3 +381,28 @@ html.theme-anim *::before,
 html.theme-anim *::after {
 	transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, fill 0.4s ease, stroke 0.4s ease !important;
 }
+
+/* Скелетон страниц кабинета вахтовика: крупный блок и две строки */
+.res-skel {
+	display: grid;
+	gap: var(--gap-md);
+}
+.res-skel span {
+	display: block;
+	height: 4rem;
+	border-radius: var(--radius-lg);
+	background: linear-gradient(90deg, var(--color-raised-bg) 25%, var(--color-button-bg) 37%, var(--color-raised-bg) 63%);
+	background-size: 400% 100%;
+	animation: res-shimmer 1.4s ease infinite;
+}
+.res-skel span:first-child {
+	height: 9rem;
+}
+@keyframes res-shimmer {
+	from {
+		background-position: 100% 50%;
+	}
+	to {
+		background-position: 0 50%;
+	}
+}

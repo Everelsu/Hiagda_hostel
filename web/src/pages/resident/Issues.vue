@@ -1,6 +1,8 @@
 <script setup>
 import { dateTime as fmt } from "@/utils/date"
-import { ref, onMounted } from "vue"
+import { ref, computed, onMounted } from "vue"
+import { useRoute, useRouter } from "vue-router"
+import IssueSteps from "@/components/IssueSteps.vue"
 import { api, post, uploadFile } from "@/api/client"
 import { toast } from "@/toast"
 import { useOverview, loadFeed } from "@/api/me"
@@ -10,6 +12,8 @@ import { amenityIcon } from "@/icons"
 import { PageHeader, Card, ListRow, Chip, StatusDot, Drawer, Field, Select, Textarea, Button, EmptyState } from "@/ui"
 
 const { overview, load } = useOverview()
+const route = useRoute()
+const router = useRouter()
 const issues = ref([])
 const loading = ref(true)
 const active = ref(null)
@@ -30,6 +34,13 @@ onMounted(async () => {
 	} finally {
 		loading.value = false
 	}
+	// С главной — «Что-то сломалось»: форма открывается сразу
+	// С главной «Что-то сломалось» или с плитки удобства в «Жилье» — форма открывается сразу
+	if (route.query.new && overview.value?.room) {
+		openNew()
+		if (route.query.amenity) form.value.amenity_name = String(route.query.amenity)
+		router.replace({ query: {} })
+	}
 })
 
 // Частые формулировки — в одно касание, печатать на телефоне неудобно
@@ -41,6 +52,16 @@ function addQuick(t) {
 function pickAmenity(name) {
 	form.value.amenity_name = form.value.amenity_name === name ? "" : name
 }
+
+// Такая поломка в номере уже заявлена (вами или соседом) — лучше дописать туда, чем дублировать
+const duplicate = computed(() =>
+	form.value.amenity_name ? issues.value.find((i) => i.status !== "Починено" && i.amenity_name === form.value.amenity_name && i.room_id === overview.value?.room?.id) : null,
+)
+function openExisting(i) {
+	creating.value = false
+	active.value = { ...i }
+}
+const author = (i) => (i.mine ? "Вы" : i.author || "Сосед")
 
 function openNew() {
 	form.value = { amenity_name: "", comment: "", photo: "" }
@@ -87,18 +108,24 @@ async function submit() {
 			<template #actions><Button variant="primary" icon="plus" :disabled="!overview?.room" @click="openNew">Новая</Button></template>
 		</PageHeader>
 
-		<Card v-if="loading"><EmptyState icon="wrench" text="Загрузка…" /></Card>
-		<Card v-else-if="!issues.length"><EmptyState icon="wrench" title="Заявок пока нет" text="Что-то сломалось — нажмите «Новая»." /></Card>
-		<div v-else class="grid" style="gap: var(--gap-sm)">
-			<ListRow v-for="i in issues" :key="i.id" interactive @click="active = { ...i }">
-				<template #lead><StatusDot :color="STATUS_COLOR[i.status]" size="12px" /></template>
-				<template #title>{{ i.amenity_name || "Заявка" }} · № {{ i.room_number }}</template>
-				<template #sub>
-					{{ i.comment }}
-					<span style="display: block; font-size: var(--font-size-xs)">{{ fmt(i.created_at) }}<template v-if="i.comments_count"> · <Icon name="message-square" size="0.85em" /> {{ i.comments_count }}</template></span>
-				</template>
-				<template #trail><Chip :color="STATUS_COLOR[i.status]" dot>{{ i.status }}</Chip></template>
-			</ListRow>
+		<div v-if="loading" class="skel" />
+		<Card v-else-if="!issues.length" class="k-rise">
+			<EmptyState icon="check" title="Заявок нет — всё работает" text="Если что-то сломается, нажмите «Новая» или на поломку в разделе «Жильё». Заявки общие на номер — соседи их тоже видят.">
+				<Button v-if="overview?.room" variant="primary" icon="plus" @click="openNew">Сообщить о поломке</Button>
+			</EmptyState>
+		</Card>
+		<div v-else class="ilist">
+			<button v-for="(i, n) in issues" :key="i.id" type="button" class="icard k-rise" :class="{ fixed: i.status === 'Починено' }" :style="{ '--i': n }" @click="active = { ...i }">
+				<div class="icard__top">
+					<b>{{ i.amenity_name || "Заявка" }}</b>
+					<span class="muted">№ {{ i.room_number }} · {{ fmt(i.created_at) }}</span>
+				</div>
+				<div v-if="!i.mine" class="icard__who"><Icon name="users" size="0.9em" /> Заявил сосед: {{ i.author || "—" }}
+				</div>
+				<p class="icard__text">{{ i.comment }}</p>
+				<IssueSteps :status="i.status" />
+				<span v-if="i.comments_count" class="icard__msgs"><Icon name="message-square" size="0.9em" /> {{ i.comments_count }} в переписке</span>
+			</button>
 		</div>
 
 		<Drawer v-if="creating" title="Новая заявка на ремонт" @close="creating = false">
@@ -117,6 +144,11 @@ async function submit() {
 						<span>{{ a.name }}</span>
 					</button>
 				</div>
+			</div>
+				<div v-if="duplicate" class="dup">
+				<Icon name="info" />
+				<span class="grow"><b>{{ author(duplicate) === "Вы" ? "Вы уже" : author(duplicate) + " уже" }} сообщил{{ author(duplicate) === "Вы" ? "и" : "" }} об этом</b> — {{ duplicate.status.toLowerCase() }}. Можно дописать туда, комендант увидит.</span>
+				<Button size="sm" @click="openExisting(duplicate)">Открыть</Button>
 			</div>
 			<div class="step">
 				<div class="step__label">Что случилось?</div>
@@ -147,11 +179,12 @@ async function submit() {
 			<div class="row" style="gap: var(--gap-sm)">
 				<Chip :color="STATUS_COLOR[active.status]" dot>{{ active.status }}</Chip>
 				<span v-if="active.amenity_name" class="muted">{{ active.amenity_name }}</span>
+				<span class="muted">· {{ author(active) === "Вы" ? "ваша заявка" : "заявил " + author(active) }}</span>
 			</div>
 			<p style="margin: var(--gap-sm) 0 0; white-space: pre-wrap">{{ active.comment }}</p>
 			<img v-if="active.photo" :src="active.photo" alt="фото заявки" class="preview" />
 			<div style="margin-top: var(--gap-md)">
-				<label style="font-size: var(--font-size-xs); color: var(--color-secondary)">Переписка с комендантом</label>
+				<label style="font-size: var(--font-size-xs); color: var(--color-secondary)">Переписка с комендантом{{ active.mine ? "" : " — можно дописать, если у вас то же" }}</label>
 				<IssueThread :issue-id="active.id" />
 			</div>
 		</Drawer>
@@ -159,6 +192,104 @@ async function submit() {
 </template>
 
 <style scoped>
+.skel {
+	height: 140px;
+	border-radius: var(--radius-lg);
+	background: var(--color-raised-bg);
+	animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+	50% {
+		opacity: 0.55;
+	}
+}
+.ilist {
+	display: grid;
+	gap: var(--gap-sm);
+}
+.icard {
+	display: grid;
+	gap: 6px;
+	width: 100%;
+	padding: var(--gap-md) var(--gap-lg);
+	border-radius: var(--radius-lg);
+	background: var(--color-raised-bg);
+	border: 1px solid var(--color-divider);
+	color: var(--color-base);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: border-color var(--speed-fast), transform var(--speed-fast);
+}
+.icard:hover {
+	border-color: var(--color-brand);
+}
+.icard:active {
+	transform: scale(0.99);
+}
+.icard.fixed {
+	opacity: 0.7;
+}
+.icard__top {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--gap-md);
+	font-size: var(--font-size-sm);
+	flex-wrap: wrap;
+}
+.icard__top b {
+	color: var(--color-contrast);
+}
+.icard__top .muted {
+	font-size: var(--font-size-xs);
+}
+.icard__text {
+	margin: 0;
+	font-size: var(--font-size-sm);
+	color: var(--color-secondary);
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+.icard__who {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+}
+.dup {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	padding: var(--gap-sm) var(--gap-md);
+	border-radius: var(--radius-md);
+	background: var(--color-orange-bg);
+	font-size: var(--font-size-sm);
+	animation: dup-in 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.dup > :deep(svg) {
+	color: var(--color-orange);
+	flex-shrink: 0;
+}
+.dup b {
+	color: var(--color-contrast);
+}
+@keyframes dup-in {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+}
+.icard__msgs {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: var(--font-size-xs);
+	color: var(--color-brand);
+	font-weight: var(--font-weight-bold);
+}
 .step {
 	display: grid;
 	gap: var(--gap-sm);
