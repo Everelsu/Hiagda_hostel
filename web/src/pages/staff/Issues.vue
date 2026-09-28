@@ -1,10 +1,11 @@
 <script setup>
+import { dateTime as fmt } from "@/utils/date"
 import { ref, onMounted, computed } from "vue"
 import { api, put } from "@/api/client"
 import { toast } from "@/toast"
 import Icon from "@/components/Icon.vue"
 import IssueThread from "@/components/IssueThread.vue"
-import { PageHeader, FilterBar, Field, Select, DataTable, Drawer, Button, Chip, StatusDot, SegmentedControl } from "@/ui"
+import { PageHeader, FilterBar, Select, DataTable, Drawer, Button, Chip, StatusDot, SegmentedControl } from "@/ui"
 
 const items = ref([])
 const hotels = ref([])
@@ -60,9 +61,6 @@ async function setStatus(issue, status) {
 		toast.error(e.message)
 	}
 }
-function fmt(d) {
-	return d ? new Date(d.replace(" ", "T") + "Z").toLocaleString("ru-RU", { dateStyle: "medium", timeStyle: "short" }) : ""
-}
 </script>
 
 <template>
@@ -72,7 +70,7 @@ function fmt(d) {
 		<div class="row wrap" style="gap: var(--gap-md); align-items: flex-end">
 			<SegmentedControl v-model="fStatus" :options="statusOptions" @update:model-value="load" />
 			<FilterBar>
-				<Field label="Гостиница"><Select v-model="fHotel" @change="load"><option value="">Все гостиницы</option><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></Select></Field>
+				<Select v-model="fHotel" style="width: auto" title="Гостиница" @change="load"><option value="">Все гостиницы</option><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></Select>
 			</FilterBar>
 		</div>
 

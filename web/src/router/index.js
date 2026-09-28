@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router"
+import { STAFF_NAV } from "@/config/nav"
 import { useAuthStore } from "@/stores/auth"
 
 const routes = [
@@ -43,6 +44,7 @@ const routes = [
 			{ path: "history", name: "history", component: () => import("@/pages/staff/History.vue") },
 			{ path: "movements", redirect: "/app/history" },
 			{ path: "journal", redirect: "/app/history" },
+			{ path: "backups", name: "backups", component: () => import("@/pages/staff/Backups.vue"), meta: { admin: true } },
 			{ path: "audit", name: "audit", component: () => import("@/pages/staff/Audit.vue") },
 		],
 	},
@@ -68,8 +70,17 @@ router.beforeEach((to) => {
 	if (auth.isRepairOnly && to.meta.staff && !REPAIR_PATHS.some((p) => to.path.startsWith(p))) {
 		return auth.homeRoute
 	}
+	if (to.meta.admin && !auth.can("admin")) return auth.homeRoute
 	if (to.name === "root") return auth.homeRoute
 	return true
+})
+
+// Заголовок вкладки браузера — по разделу: среди десятка вкладок нужную видно сразу
+router.afterEach((to) => {
+	const item = STAFF_NAV.flatMap((g) => g.items).find((i) => to.path.startsWith(i.to))
+	const RESIDENT = { "resident-home": "Главная", "resident-room": "Мой номер", "resident-plan": "План этажа", "resident-hotel": "Дом и посёлок", "resident-issues": "Заявки", "resident-profile": "Профиль" }
+	const title = item?.label || RESIDENT[to.name] || (to.name === "login" ? "Вход" : "")
+	document.title = title ? `${title} · Хиагда` : "Хиагда — учёт номерного фонда"
 })
 
 export default router

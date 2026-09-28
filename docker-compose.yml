@@ -1,0 +1,47 @@
+# Запуск: заполнить .env (минимум PGPASSWORD) и `docker compose up -d --build`.
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nochotel
+      POSTGRES_USER: nochotel
+      POSTGRES_PASSWORD: ${PGPASSWORD:?задайте PGPASSWORD в .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "nochotel", "-d", "nochotel"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    # Перекрывает значения из .env: внутри compose база всегда в сервисе db.
+    environment:
+      DATABASE_URL: ""
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: nochotel
+      PGUSER: nochotel
+      PORT: "3000"
+      PG_BIN: ""
+      BACKUP_DIR: /app/backups
+    ports:
+      - "${PORT:-3000}:3000"
+    # Каталоги на хосте: фото/вложения и резервные копии переживут `docker compose down -v`.
+    # ponytail: процесс в контейнере работает от root, чтобы писать в bind-mount без chown;
+    # перейти на USER node, если каталоги на хосте заранее отдать uid 1000.
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+
+volumes:
+  pgdata:

@@ -18,7 +18,8 @@ export async function api(path, opts = {}) {
 			...(opts.headers || {}),
 		},
 	})
-	if (res.status === 401) {
+	// 401 без токена — это неудачный вход, а не истёкшая сессия: показываем ответ сервера.
+	if (res.status === 401 && token) {
 		window.dispatchEvent(new CustomEvent("noch:unauthorized"))
 		throw new Error("Сессия истекла")
 	}
@@ -36,7 +37,9 @@ export async function download(path) {
     const blob = await res.blob()
 
     const cd = res.headers.get("Content-Disposition") || ""
-    const name = (cd.match(/filename="(.+)"/) || [])[1] || "download"
+    // filename* (UTF-8) приоритетнее: в нём русское имя без искажений
+    const star = (cd.match(/filename\*=UTF-8''([^;]+)/i) || [])[1]
+    const name = star ? decodeURIComponent(star) : (cd.match(/filename="(.+?)"/) || [])[1] || "download"
 
     const url = URL.createObjectURL(blob)
 

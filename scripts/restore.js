@@ -1,9 +1,13 @@
 #!/usr/bin/env node
-// Восстановление NochOtel из резервной копии.
+// Восстановление «Хиагды» из резервной копии.
 //
 //   node scripts/restore.js backups/2026-09-09_0300          — что будет сделано
 //   node scripts/restore.js backups/2026-09-09_0300 --yes     — выполнить
 //   node scripts/restore.js backups/2026-09-09_0300 --yes --db-only
+//
+// В Docker: docker compose stop app
+//           docker compose run --rm app node scripts/restore.js backups/2026-09-09_0300 --yes
+//           docker compose start app
 //
 // Операция разрушающая: содержимое текущей базы заменяется данными из копии.
 // Поэтому без --yes скрипт только показывает план и ничего не трогает.
@@ -84,7 +88,7 @@ const manifestFile = path.join(dir, "manifest.json")
 const manifest = fs.existsSync(manifestFile) ? JSON.parse(fs.readFileSync(manifestFile, "utf8")) : null
 const conn = connection()
 
-console.log("Восстановление NochOtel из копии")
+console.log("Восстановление из резервной копии")
 console.log(`  копия:  ${dir}`)
 if (manifest) console.log(`  снята:  ${manifest.created_at} (${manifest.database})`)
 console.log(`  в базу: ${conn.label}`)
@@ -105,9 +109,9 @@ if (!filesOnly) {
 if (!confirmed) {
 	console.log("")
 	console.log("Будет сделано:")
-	if (!filesOnly) console.log("  • существующие таблицы NochOtel удалены и созданы заново из дампа")
+	if (!filesOnly) console.log("  • существующие таблицы приложения удалены и созданы заново из дампа")
 	if (!dbOnly && (fs.existsSync(filesArchive) || fs.existsSync(filesDir))) {
-		console.log("  • каталог data/ заменён содержимым копии (текущий сохранится как data.before-restore-…)")
+		console.log("  • каталог data/ заменён содержимым копии (текущий сохранится в backups/data.before-restore-…)")
 	}
 	console.log("")
 	console.log("Это уничтожит текущие данные. Остановите сервер и повторите с флагом --yes.")
@@ -138,10 +142,13 @@ if (!dbOnly) {
 	if (hasArchive || hasDir) {
 		// Текущий data/ не удаляем, а отодвигаем: если в копии чего-то не хватает,
 		// файлы можно достать вручную.
+		// Копируем и чистим, а не переименовываем: в Docker data/ — точка монтирования,
+		// её не переименовать. Копию кладём к бэкапам — это каталог, который точно сохранится.
 		if (fs.existsSync(DATA_DIR)) {
-			const aside = `${DATA_DIR}.before-restore-${Date.now()}`
-			fs.renameSync(DATA_DIR, aside)
-			console.log(`  прежний data/ сохранён: ${path.basename(aside)}`)
+			const aside = path.join(process.env.BACKUP_DIR || path.join(ROOT, "backups"), `data.before-restore-${Date.now()}`)
+			fs.cpSync(DATA_DIR, aside, { recursive: true })
+			for (const e of fs.readdirSync(DATA_DIR)) fs.rmSync(path.join(DATA_DIR, e), { recursive: true, force: true })
+			console.log(`  прежний data/ сохранён: ${aside}`)
 		}
 		if (hasArchive) run("tar", ["-xzf", filesArchive, "-C", ROOT])
 		else fs.cpSync(filesDir, DATA_DIR, { recursive: true })

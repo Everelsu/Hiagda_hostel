@@ -17,7 +17,7 @@ import { useAuthStore } from "@/stores/auth"
 import PlacementModal from "@/components/PlacementModal.vue"
 import Icon from "@/components/Icon.vue"
 import Modal from "@/components/Modal.vue"
-import { PageHeader, Select, Input, Button, StatusDot, confirm } from "@/ui"
+import { PageHeader, Select, Input, Button, StatusDot, confirm, DateInput } from "@/ui"
 
 const COL = 40
 const ROW = 34
@@ -691,7 +691,7 @@ const selStyle = computed(() => {
 			</label>
 			<label class="tbf">
 				<span class="tbf__label">Начало периода</span>
-				<Input v-model="from" type="date" style="width: auto" @change="load" />
+				<DateInput v-model="from" style="width: auto" @change="load" />
 			</label>
 			<div class="tbf">
 				<span class="tbf__label">Показывать дней</span>

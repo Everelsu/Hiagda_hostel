@@ -28,8 +28,14 @@ defineProps({ options: { type: Array, default: () => [] } })
 .k-tabs {
 	display: flex;
 	gap: var(--gap-xs);
-	border-bottom: 1px solid var(--color-divider);
+	/* Линия-разделитель тенью, а не border: с отрицательным отступом у вкладок
+	   появлялся лишний пиксель по вертикали и мини-скроллбар справа. */
+	box-shadow: inset 0 -1px 0 var(--color-divider);
 	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: none;
+	/* в колонке с прокруткой (шторка) не сжиматься в ноль из-за overflow */
+	flex-shrink: 0;
 }
 .k-tab {
 	display: inline-flex;
@@ -43,7 +49,6 @@ defineProps({ options: { type: Array, default: () => [] } })
 	font-size: var(--font-size-sm);
 	padding: var(--gap-sm) var(--gap-md);
 	border-bottom: 2px solid transparent;
-	margin-bottom: -1px;
 	cursor: pointer;
 	white-space: nowrap;
 }

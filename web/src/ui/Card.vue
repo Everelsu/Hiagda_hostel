@@ -4,9 +4,9 @@ defineProps({ title: String, subtitle: String, pad: { type: String, default: "lg
 
 <template>
 	<div class="k-card" :class="[`k-card--${pad}`, { 'k-card--interactive': interactive, 'k-card--stack': stack }]">
-		<header v-if="title || $slots.actions" class="k-card__head">
+		<header v-if="title || $slots.title || $slots.actions" class="k-card__head">
 			<div class="k-card__titles">
-				<h3 v-if="title" class="k-card__title">{{ title }}</h3>
+				<slot name="title"><h3 v-if="title" class="k-card__title">{{ title }}</h3></slot>
 				<p v-if="subtitle" class="k-card__subtitle">{{ subtitle }}</p>
 			</div>
 			<div v-if="$slots.actions" class="k-card__actions"><slot name="actions" /></div>
@@ -63,6 +63,9 @@ defineProps({ title: String, subtitle: String, pad: { type: String, default: "lg
 	font-size: var(--font-size-sm);
 	color: var(--color-secondary);
 	margin: 2px 0 0;
+}
+.k-card__titles {
+	min-width: 0;
 }
 .k-card__actions {
 	display: flex;

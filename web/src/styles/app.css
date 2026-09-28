@@ -29,6 +29,48 @@ h4 {
 .contrast {
 	color: var(--color-contrast);
 }
+.nowrap {
+	white-space: nowrap;
+}
+
+/* ── Мелочи, из которых складывается «приятно» ─────────────────────────────── */
+::selection {
+	background: var(--color-brand-highlight);
+	color: var(--color-contrast);
+}
+/* Тонкие скроллбары в цвет темы вместо системных серых */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--color-button-border) transparent;
+}
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+::-webkit-scrollbar-thumb {
+	background: var(--color-button-border);
+	border-radius: 999px;
+	border: 3px solid transparent;
+	background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+	background-color: var(--color-secondary);
+}
+/* Рамка фокуса — только при работе с клавиатуры, не при клике мышью */
+:where(a, button, [tabindex]):focus-visible {
+	outline: 2px solid var(--color-brand);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+/* Цифры в таблицах и счётчиках одной ширины — колонки не «пляшут» */
+table,
+.k-stat__value,
+.kpi__value {
+	font-variant-numeric: tabular-nums;
+}
+html {
+	-webkit-tap-highlight-color: transparent;
+}
 
 /* Кнопки */
 .btn {

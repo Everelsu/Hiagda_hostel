@@ -1,0 +1,9 @@
+node_modules
+dist
+data
+backups
+data.before-restore-*
+.env
+.git
+docs
+*.log

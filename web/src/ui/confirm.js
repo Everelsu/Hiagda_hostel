@@ -10,6 +10,8 @@ export function confirm(opts = {}) {
 			confirmLabel: opts.confirmLabel || "Подтвердить",
 			cancelLabel: opts.cancelLabel || "Отмена",
 			danger: !!opts.danger,
+			// Для необратимых действий: кнопка активна, только когда введён этот текст
+			typeText: opts.typeText || "",
 		}
 		confirmState._resolve = resolve
 		confirmState.open = true

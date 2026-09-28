@@ -135,7 +135,7 @@ function fmt(d) {
 				<!-- Контакты: звонок в один тап -->
 				<section class="facts">
 					<a v-if="hotel.phone" :href="`tel:${hotel.phone}`" class="fact">
-						<Icon name="phone" /><span><b>Комендант</b>{{ hotel.phone }}</span>
+						<Icon name="phone" /><span><b>Комендант</b><span class="nowrap">{{ hotel.phone }}</span></span>
 					</a>
 					<a v-if="hotel.email" :href="`mailto:${hotel.email}`" class="fact">
 						<Icon name="mail" /><span><b>E-mail</b>{{ hotel.email }}</span>

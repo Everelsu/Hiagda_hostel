@@ -8,7 +8,7 @@ import { api, download } from "@/api/client"
 import { today, addDays } from "@/utils/date"
 import { toast } from "@/toast"
 import Icon from "@/components/Icon.vue"
-import { PageHeader, Card, Tabs, Input, Select, Button, IconButton, Chip, StatusDot, EmptyState, Skeleton } from "@/ui"
+import { PageHeader, Card, Tabs, Input, Select, Button, IconButton, Chip, StatusDot, EmptyState, Skeleton, DateInput } from "@/ui"
 
 const tab = ref("journal")
 const hotels = ref([])
@@ -101,7 +101,7 @@ const groups = computed(() => {
 	for (const r of rows.value) {
 		const d = new Date(r.date_from)
 		const key = `${d.getFullYear()}-${d.getMonth()}`
-		const label = d.toLocaleDateString("ru-RU", { month: "long", year: "numeric" })
+		const label = d.toLocaleDateString("ru-RU", { month: "long", year: "numeric" }).replace(" г.", "")
 		let g = out.find((x) => x.key === key)
 		if (!g) out.push((g = { key, label, items: [] }))
 		g.items.push(r)
@@ -143,8 +143,8 @@ const isToday = computed(() => day.value === today())
 					<option value="">Любая стадия</option>
 					<option v-for="(l, k) in STAGES" :key="k" :value="k">{{ l }}</option>
 				</Select>
-				<Input v-model="from" type="date" style="width: auto" @change="loadJournal" />
-				<Input v-model="to" type="date" style="width: auto" @change="loadJournal" />
+				<DateInput v-model="from" clearable placeholder="с даты" :range="[from, to]" style="width: auto" @change="loadJournal" />
+				<DateInput v-model="to" clearable placeholder="по дату" :min="from" :range="[from, to]" style="width: auto" @change="loadJournal" />
 				<Button v-if="hasFilters" variant="ghost" icon="x" @click="resetFilters">Сбросить</Button>
 			</Card>
 
@@ -188,7 +188,7 @@ const isToday = computed(() => day.value === today())
 		<template v-else>
 			<Card pad="md" class="dayline">
 				<Button size="sm" icon="chevron-left" @click="shiftDay(-1)" />
-				<Input v-model="day" type="date" style="width: auto" />
+				<DateInput v-model="day" style="width: auto" />
 				<Button size="sm" icon="chevron-right" @click="shiftDay(1)" />
 				<Button v-if="!isToday" size="sm" @click="day = today()">Сегодня</Button>
 				<span class="grow" />

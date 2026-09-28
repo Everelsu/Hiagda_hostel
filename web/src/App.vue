@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted } from "vue"
+import { ref, onMounted, onUnmounted } from "vue"
 import { useRouter } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
 import ToastHost from "@/ui/ToastHost.vue"
@@ -9,18 +9,25 @@ import { connectRealtime, disconnectRealtime } from "@/realtime"
 const router = useRouter()
 const auth = useAuthStore()
 
+// На вахте связь бывает рваной: честно говорим, что сохранить сейчас не получится
+const offline = ref(!navigator.onLine)
+const setOnline = () => (offline.value = false)
+const setOffline = () => (offline.value = true)
+
 function onUnauthorized() {
 	auth.logout()
 	router.push({ name: "login" })
 }
 onMounted(() => {
-	const theme = localStorage.getItem("noch_theme") || "dark"
-	document.documentElement.setAttribute("data-theme", theme)
 	window.addEventListener("noch:unauthorized", onUnauthorized)
+	window.addEventListener("online", setOnline)
+	window.addEventListener("offline", setOffline)
 	if (auth.isAuthed) connectRealtime()
 })
 onUnmounted(() => {
 	window.removeEventListener("noch:unauthorized", onUnauthorized)
+	window.removeEventListener("online", setOnline)
+	window.removeEventListener("offline", setOffline)
 	disconnectRealtime()
 })
 </script>
@@ -29,4 +36,35 @@ onUnmounted(() => {
 	<router-view />
 	<ToastHost />
 	<ConfirmHost />
+	<Transition name="offline">
+		<div v-if="offline" class="offline" role="status">Нет подключения к интернету — изменения не сохранятся, пока связь не вернётся</div>
+	</Transition>
 </template>
+
+<style>
+.offline {
+	position: fixed;
+	left: 50%;
+	bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+	transform: translateX(-50%);
+	z-index: var(--z-toast);
+	max-width: calc(100vw - 32px);
+	padding: 8px 16px;
+	border-radius: 999px;
+	background: var(--color-orange);
+	color: #1a1205;
+	font-size: var(--font-size-sm);
+	font-weight: 700;
+	text-align: center;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.offline-enter-active,
+.offline-leave-active {
+	transition: opacity 200ms, transform 200ms;
+}
+.offline-enter-from,
+.offline-leave-to {
+	opacity: 0;
+	transform: translate(-50%, 8px);
+}
+</style>

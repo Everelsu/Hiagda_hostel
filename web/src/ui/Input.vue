@@ -79,6 +79,12 @@ const revealLabel = computed(() => (revealed.value ? "Скрыть пароль"
 .k-input--invalid {
 	border-color: var(--color-red);
 }
+/* Поля только для чтения не должны выглядеть как редактируемые */
+.k-input:disabled {
+	background: transparent;
+	color: var(--color-secondary);
+	cursor: not-allowed;
+}
 .k-input--invalid:focus {
 	box-shadow: 0 0 0 3px var(--color-red-bg);
 }

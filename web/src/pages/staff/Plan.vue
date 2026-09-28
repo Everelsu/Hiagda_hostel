@@ -1,14 +1,14 @@
 <script setup>
 import { ref, onMounted, computed, watch } from "vue"
 import { api, post, put, del } from "@/api/client"
-import { today } from "@/utils/date"
+import { today, dm, dateTime } from "@/utils/date"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
 import { useCounters } from "@/stores/counters"
 import FloorPlan from "@/components/FloorPlan.vue"
 import PlacementModal from "@/components/PlacementModal.vue"
 import Icon from "@/components/Icon.vue"
-import { PageHeader, Card, Select, Input, Button, IconButton, Drawer, Chip, StatusDot, EmptyState, Field, confirm } from "@/ui"
+import { PageHeader, Card, Select, Input, Button, IconButton, Drawer, Chip, StatusDot, EmptyState, Field, confirm, DateInput } from "@/ui"
 
 const auth = useAuthStore()
 const counters = useCounters()
@@ -170,6 +170,27 @@ function placeRoom(room) {
 		}
 	}
 }
+// Быстрый старт: пустой этаж раскладываем «коридор посередине, номера по сторонам»,
+// иначе просто досаживаем неразмещённые номера на свободные места.
+function autoLayout() {
+	const list = [...unplaced.value].sort((a, b) => String(a.number).localeCompare(String(b.number), "ru", { numeric: true }))
+	const perRow = Math.ceil(list.length / 2)
+	if (!placed.value.length && !floorShapes.value.length && perRow <= 8) {
+		list.forEach((r, i) => {
+			const top = i < perRow
+			Object.assign(r, { plan_x: (top ? i : i - perRow) * 3, plan_y: top ? 0 : 4, plan_w: 3, plan_h: 2 })
+		})
+		shapes.value.push({ id: tmpId--, floor: floor.value, kind: "corridor", label: null, x: 0, y: 2, w: perRow * 3, h: 2, cells: null })
+		dirty.value = true
+	} else list.forEach(placeRoom)
+	selectedId.value = null
+	toast.success("Номера расставлены — поправьте мышью и сохраните")
+}
+function startAutoLayout() {
+	editing.value = true
+	// watch(editing) сбрасывает выделение асинхронно — раскладываем после него
+	setTimeout(autoLayout)
+}
 function unplaceRoom(room) {
 	Object.assign(room, { plan_x: null, plan_y: null, plan_w: null, plan_h: null })
 	dirty.value = true
@@ -270,7 +291,7 @@ function openBed(bed) {
 				<Select v-model="hotelId" style="width: auto" title="Гостиница" @change="load">
 					<option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option>
 				</Select>
-				<Input v-if="!editing" v-model="date" type="date" style="width: auto" title="На какую дату показывать занятость" @change="load" />
+				<DateInput v-if="!editing" v-model="date" style="width: auto" title="На какую дату показывать занятость" @change="load" />
 				<Button v-if="canEdit && !editing" icon="pencil" @click="editing = true">Редактировать план</Button>
 				<template v-else-if="canEdit">
 					<Button variant="ghost" @click="editing = false">Отмена</Button>
@@ -280,6 +301,18 @@ function openBed(bed) {
 		</PageHeader>
 
 		<Card v-if="!floors.length"><EmptyState icon="layout" title="Номеров нет" text="Добавьте номера в разделе «Гостиницы и номера»." /></Card>
+
+		<Card v-else-if="!editing && !placed.length && !floorShapes.length">
+			<EmptyState icon="layout" title="План этого этажа ещё не начерчен" text="Расставьте номера на схеме — вахтовики увидят, где их комната, душевая и выход, а вы — занятость этажа одним взглядом.">
+				<div v-if="canEdit" class="row wrap" style="justify-content: center; gap: var(--gap-sm)">
+					<Button variant="primary" icon="layout" @click="startAutoLayout">Расставить автоматически</Button>
+					<Button icon="pencil" @click="editing = true">Начертить вручную</Button>
+				</div>
+			</EmptyState>
+			<div v-if="floors.length > 1" class="floors" style="justify-content: center; margin-top: var(--gap-md)">
+				<button v-for="f in floors" :key="f" type="button" class="fbtn" :class="{ on: f === floor }" @click="floor = f">{{ f }} этаж</button>
+			</div>
+		</Card>
 
 		<template v-else>
 			<div class="bar">
@@ -318,6 +351,7 @@ function openBed(bed) {
 						{{ carving ? "Готово с формой" : "Форма: вырезать клетки" }}
 					</Button>
 					<Button v-if="carvedSelection" variant="ghost" icon="rotate-cw" @click="resetShape">Снова прямоугольник</Button>
+					<Button v-if="!carving && unplaced.length" icon="plus" @click="autoLayout">Расставить неразмещённые ({{ unplaced.length }})</Button>
 					<span v-if="carving && !selectedId" class="muted ed-hint">Выберите номер или помещение и кликайте по его клеткам.</span>
 				</div>
 				<div v-if="!carving" class="ed-row">
@@ -393,7 +427,7 @@ function openBed(bed) {
 					<b class="contrast">{{ b.label }}</b> —
 					<template v-if="b.placement">
 						{{ b.placement.resident_name || b.placement.status_name }}
-						<span class="muted">({{ b.placement.date_from }} – {{ b.placement.date_to }})</span>
+						<span class="muted">({{ dm(b.placement.date_from) }} – {{ dm(b.placement.date_to) }})</span>
 					</template>
 					<span v-else class="muted">свободно</span>
 				</span>
@@ -406,7 +440,7 @@ function openBed(bed) {
 				<div class="grow">
 					<div class="issue-head"><b class="contrast">{{ issue.amenity_name || "Заявка" }}</b> <Chip>{{ issue.status }}</Chip></div>
 					<div class="issue-text">{{ issue.comment }}</div>
-					<div class="muted issue-meta">{{ issue.user_name || "Вахтовик" }} · {{ issue.created_at }}</div>
+					<div class="muted issue-meta">{{ issue.user_name || "Вахтовик" }} · {{ dateTime(issue.created_at) }}</div>
 				</div>
 				<div class="row" style="gap: 4px">
 					<Button v-if="issue.status === 'Новая'" size="sm" @click="updateIssueStatus(issue, 'В работе')">В работу</Button>
@@ -418,12 +452,12 @@ function openBed(bed) {
 				<div class="section-title" style="margin-top: var(--gap-md)">Ремонт</div>
 				<div v-for="b in blocks" :key="b.id" class="bedrow">
 					<Icon name="wrench" style="color: var(--color-orange)" />
-					<span class="grow">{{ b.date_from }} – {{ b.date_to }}<template v-if="b.reason"> · {{ b.reason }}</template></span>
+					<span class="grow">{{ dm(b.date_from) }} – {{ dm(b.date_to) }}<template v-if="b.reason"> · {{ b.reason }}</template></span>
 					<IconButton icon="trash" label="Снять" size="sm" variant="danger" @click="removeBlock(b)" />
 				</div>
 				<div class="row wrap" style="margin-top: var(--gap-sm); gap: var(--gap-sm)">
-					<Input v-model="blockForm.date_from" type="date" style="width: auto" />
-					<Input v-model="blockForm.date_to" type="date" style="width: auto" />
+					<DateInput v-model="blockForm.date_from" style="width: auto" />
+					<DateInput v-model="blockForm.date_to" :min="blockForm.date_from" style="width: auto" />
 					<Input v-model="blockForm.reason" placeholder="Причина" style="min-width: 120px; flex: 1" />
 					<Button icon="wrench" @click="addBlock">На ремонт</Button>
 				</div>

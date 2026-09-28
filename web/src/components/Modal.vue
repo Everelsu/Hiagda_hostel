@@ -1,10 +1,20 @@
 <script setup>
-defineProps({ title: String, wide: Boolean })
+import { onMounted, onUnmounted } from "vue"
+
+// persistent — не закрывать кликом мимо и Esc (например, окно с одноразовыми паролями)
+const props = defineProps({ title: String, wide: Boolean, persistent: Boolean })
 const emit = defineEmits(["close"])
+
+function dismiss() {
+	if (!props.persistent) emit("close")
+}
+const onKey = (e) => e.key === "Escape" && dismiss()
+onMounted(() => document.addEventListener("keydown", onKey))
+onUnmounted(() => document.removeEventListener("keydown", onKey))
 </script>
 
 <template>
-	<div class="overlay" @click.self="emit('close')">
+	<div class="overlay" @click.self="dismiss">
 		<div class="modal" :class="{ wide }">
 			<h3 class="modal-head">{{ title }}</h3>
 			<div class="modal-body"><slot /></div>
@@ -23,6 +33,18 @@ const emit = defineEmits(["close"])
 	justify-content: center;
 	padding: 20px;
 	z-index: 100;
+	animation: m-fade var(--speed) ease;
+}
+@keyframes m-fade {
+	from {
+		opacity: 0;
+	}
+}
+@keyframes m-pop {
+	from {
+		opacity: 0;
+		transform: translateY(6px) scale(0.98);
+	}
 }
 .modal {
 	width: 100%;
@@ -33,6 +55,7 @@ const emit = defineEmits(["close"])
 	border: 1px solid var(--color-divider);
 	border-radius: var(--radius-lg);
 	box-shadow: var(--shadow-floating);
+	animation: m-pop var(--speed) ease;
 }
 .modal.wide {
 	max-width: 720px;

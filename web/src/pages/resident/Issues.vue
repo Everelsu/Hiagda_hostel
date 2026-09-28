@@ -1,4 +1,5 @@
 <script setup>
+import { dateTime as fmt } from "@/utils/date"
 import { ref, onMounted } from "vue"
 import { api, post, uploadFile } from "@/api/client"
 import { toast } from "@/toast"
@@ -66,9 +67,6 @@ async function submit() {
 	} finally {
 		busy.value = false
 	}
-}
-function fmt(d) {
-	return d ? new Date(d.replace(" ", "T") + "Z").toLocaleString("ru-RU", { dateStyle: "medium", timeStyle: "short" }) : ""
 }
 </script>
 

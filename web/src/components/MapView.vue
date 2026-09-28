@@ -149,6 +149,22 @@ onBeforeUnmount(() => {
 	z-index: 0;
 	background: var(--color-raised-bg);
 }
+/* Тёмная тема — тёмная подложка: инвертируем только тайлы, метки остаются своих цветов */
+:root[data-theme="dark"] .noch-map .leaflet-tile-pane {
+	filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.85) saturate(0.6);
+}
+:root[data-theme="dark"] .noch-map .leaflet-control-attribution {
+	background: rgba(22, 24, 28, 0.7);
+	color: var(--color-secondary);
+}
+:root[data-theme="dark"] .noch-map .leaflet-control-attribution a {
+	color: var(--color-brand);
+}
+:root[data-theme="dark"] .noch-map .leaflet-bar a {
+	background: var(--color-raised-bg);
+	color: var(--color-contrast);
+	border-color: var(--color-divider);
+}
 .noch-pin span {
 	display: block;
 	width: 20px;

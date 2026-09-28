@@ -1,5 +1,8 @@
 <script setup>
-import { ref, onMounted, computed } from "vue"
+import { dateTime, nightsBetween, nightsWord, today } from "@/utils/date"
+import { printCreds } from "@/utils/printCreds"
+import { ref, onMounted, computed, watch } from "vue"
+import { useRoute, useRouter } from "vue-router"
 import { api, post, put, del, download } from "@/api/client"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
@@ -8,8 +11,11 @@ import {
 	PageHeader, SegmentedControl, FilterBar, Input, Button, IconButton, DataTable, Drawer, Tabs,
 	Field, Textarea, Select, Avatar, Chip, StatusDot, EmptyState, confirm,
 } from "@/ui"
+import Icon from "@/components/Icon.vue"
 
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const canEdit = auth.can("editor")
 const canAdmin = auth.can("admin")
 
@@ -38,14 +44,6 @@ const residentColumns = [
 	{ key: "position", label: "Должность" },
 	{ key: "account_username", label: "Доступ" },
 ]
-const stayColumns = [
-	{ key: "hotel_name", label: "Гостиница" },
-	{ key: "room_number", label: "Номер" },
-	{ key: "bed_label", label: "Место" },
-	{ key: "date_from", label: "Заезд" },
-	{ key: "date_to", label: "Выезд" },
-	{ key: "stage", label: "Стадия" },
-]
 const stageLabel = { expected: "Ожидается", checked_in: "Проживает", checked_out: "Выехал", cancelled: "Отменён" }
 
 let timer
@@ -62,15 +60,39 @@ async function loadResidents() {
 	}
 }
 
+// Несохранённые правки: сравниваем форму со снимком на момент открытия/сохранения
+const snap = ref("")
+const dirty = computed(() => !!profile.value && JSON.stringify(form.value) !== snap.value)
+async function closeProfile() {
+	if (dirty.value && !(await confirm({ title: "Закрыть без сохранения?", message: "Изменения в карточке пропадут.", danger: true, confirmLabel: "Не сохранять", cancelLabel: "Вернуться" }))) return
+	profile.value = null
+}
+
+// Текущее проживание: бронь не отменена и сегодня внутри [заезд, выезд)
+const currentStay = computed(() => {
+	const t = today()
+	return stays.value.find((s) => s.stage !== "cancelled" && s.stage !== "checked_out" && s.date_from <= t && s.date_to > t) || null
+})
+const dd = (v, year = false) => new Date(`${v}T00:00:00`).toLocaleDateString("ru-RU", { day: "numeric", month: "short", ...(year ? { year: "numeric" } : {}) })
+function daysLeft(s) {
+	const n = nightsBetween(today(), s.date_to)
+	return `${n} ${nightsWord(n)}`
+}
+function copyText(t) {
+	navigator.clipboard?.writeText(t).then(() => toast.success("Скопировано"))
+}
+
 function newResident() {
 	profile.value = { id: null, full_name: "" }
 	form.value = { full_name: "", tab_number: "", company: "", department: "", position: "", phone: "", note: "" }
+	snap.value = JSON.stringify(form.value)
 	stays.value = []
 	profileTab.value = "data"
 }
 async function openProfile(r) {
 	profile.value = { ...r }
 	form.value = { full_name: r.full_name, tab_number: r.tab_number || "", company: r.company || "", department: r.department || "", position: r.position || "", phone: r.phone || "", note: r.note || "" }
+	snap.value = JSON.stringify(form.value)
 	profileTab.value = "data"
 	stays.value = []
 	try {
@@ -88,6 +110,7 @@ async function saveProfile() {
 			profile.value.id = r.id
 		}
 		toast.success("Сохранено")
+		snap.value = JSON.stringify(form.value)
 		await loadResidents()
 		const fresh = residents.value.find((x) => x.id === profile.value.id)
 		if (fresh) profile.value = { ...fresh }
@@ -139,17 +162,19 @@ async function bulkIssue() {
 		toast.error(e.message)
 	}
 }
+// Пароль виден один раз: без копирования или печати закрыть окно — значит выдавать заново
+async function closeCreds() {
+	if (!creds.value.saved && !(await confirm({ title: "Закрыть без сохранения?", message: "Вы не распечатали и не скопировали пароли. После закрытия их не посмотреть — придётся сбрасывать заново.", danger: true, confirmLabel: "Закрыть", cancelLabel: "Вернуться" }))) return
+	creds.value = null
+}
 function copyCreds() {
+	creds.value.saved = true
 	const text = creds.value.list.map((c) => `${c.full_name}\tлогин: ${c.username}\tпароль: ${c.password}`).join("\n")
 	navigator.clipboard?.writeText(text).then(() => toast.success("Скопировано"))
 }
-function printCreds() {
-	const rows = creds.value.list
-		.map((c) => `<div class="slip"><div class="n">${c.full_name}</div><div>Логин: <b>${c.username}</b></div><div>Пароль: <b>${c.password}</b></div><div class="hint">Смените пароль при первом входе.</div></div>`)
-		.join("")
-	const w = window.open("", "_blank")
-	w.document.write(`<html><head><title>Реквизиты доступа</title><style>body{font-family:sans-serif;padding:20px}.slip{border:1px dashed #888;border-radius:8px;padding:14px 18px;margin:0 0 12px;max-width:360px}.n{font-weight:700;font-size:18px;margin-bottom:6px}.hint{color:#888;font-size:12px;margin-top:6px}b{font-size:16px}@media print{.slip{page-break-inside:avoid}}</style></head><body><h2>Реквизиты доступа · Хиагда</h2>${rows}<script>window.print()<\/script></body></html>`)
-	w.document.close()
+function printAll() {
+	creds.value.saved = true
+	printCreds(creds.value.list)
 }
 
 /* ---------- Персонал ---------- */
@@ -203,13 +228,22 @@ async function removeStaff(u) {
 	}
 }
 
+// ?open=ID — открыть карточку сразу (так ведёт быстрый поиск Ctrl+K)
+async function openFromQuery() {
+	const id = Number(route.query.open)
+	if (!id) return
+	view.value = "residents"
+	const r = residents.value.find((x) => x.id === id)
+	if (r) openProfile(r)
+	router.replace({ query: {} })
+}
+watch(() => route.query.open, openFromQuery)
 onMounted(async () => {
 	await loadResidents()
+	openFromQuery()
 	if (canAdmin) loadStaff()
 })
-function fmt(d) {
-	return d ? new Date(d.replace(" ", "T") + "Z").toLocaleDateString("ru-RU", { dateStyle: "medium" }) : ""
-}
+const fmt = (d) => dateTime(d, { dateStyle: "medium" })
 </script>
 
 <template>
@@ -272,55 +306,125 @@ function fmt(d) {
 		</template>
 
 		<!-- Профиль вахтовика -->
-		<Drawer v-if="profile" :title="profile.id ? profile.full_name : 'Новый вахтовик'" width="620px" @close="profile = null">
-			<Tabs v-if="profile.id" v-model="profileTab" :options="[{ value: 'data', label: 'Данные' }, { value: 'access', label: 'Доступ' }, { value: 'stays', label: 'Проживания', count: stays.length }]" style="margin-bottom: var(--gap-lg)" />
+		<Drawer v-if="profile" width="640px" @close="closeProfile">
+			<template #head>
+				<div v-if="profile.id" class="ph">
+					<Avatar :src="profile.photo" :name="profile.full_name" size="3.4rem" />
+					<div class="ph__text">
+						<h3 class="ph__name">{{ profile.full_name }}</h3>
+						<div class="ph__sub">{{ [profile.position, profile.department].filter(Boolean).join(" · ") || "Должность не указана" }}</div>
+						<div class="ph__chips">
+							<span v-if="profile.tab_number" class="ph__tag">таб. {{ profile.tab_number }}</span>
+							<span v-if="profile.company" class="ph__tag">{{ profile.company }}</span>
+							<Chip v-if="currentStay" color="var(--color-green)" dot>проживает</Chip>
+							<Chip v-if="profile.account_username" :color="profile.account_must_change ? 'var(--color-orange)' : 'var(--color-blue)'" dot>
+								{{ profile.account_must_change ? "доступ выдан" : "в кабинете" }}
+							</Chip>
+						</div>
+					</div>
+				</div>
+				<div v-else class="ph">
+					<Avatar :name="form.full_name || '+'" size="3.4rem" />
+					<div class="ph__text">
+						<h3 class="ph__name">{{ form.full_name || "Новый вахтовик" }}</h3>
+						<div class="ph__sub">Заполните карточку — доступ в кабинет можно выдать после сохранения</div>
+					</div>
+				</div>
+			</template>
+
+			<!-- Где живёт сейчас: главное, что ищут в карточке -->
+			<div v-if="currentStay" class="now">
+				<Icon name="bed" size="1.3rem" />
+				<div class="grow">
+					<div class="now__place">{{ currentStay.hotel_name }} · № {{ currentStay.room_number }} · {{ currentStay.bed_label }}</div>
+					<div class="now__dates">{{ dd(currentStay.date_from) }} – {{ dd(currentStay.date_to) }} · ещё {{ daysLeft(currentStay) }}</div>
+				</div>
+			</div>
+
+			<Tabs
+				v-if="profile.id"
+				v-model="profileTab"
+				:options="[
+					{ value: 'data', label: 'Данные', icon: 'user' },
+					{ value: 'access', label: 'Доступ', icon: 'key' },
+					{ value: 'stays', label: 'Проживания', icon: 'calendar', count: stays.length },
+				]"
+			/>
 
 			<template v-if="profileTab === 'data' || !profile.id">
-				<Field label="ФИО"><Input v-model="form.full_name" /></Field>
-				<div class="two">
-					<Field label="Табельный №"><Input v-model="form.tab_number" /></Field>
-					<Field label="Организация"><Input v-model="form.company" /></Field>
-				</div>
-				<Field label="Подразделение"><Input v-model="form.department" /></Field>
-				<div class="two">
-					<Field label="Должность"><Input v-model="form.position" /></Field>
-					<Field label="Телефон"><Input v-model="form.phone" /></Field>
-				</div>
-				<Field label="Примечание"><Textarea v-model="form.note" :rows="2" /></Field>
+				<section class="fs">
+					<h4 class="fs__title">Основное</h4>
+					<Field label="ФИО"><Input v-model="form.full_name" placeholder="Фамилия Имя Отчество" :disabled="!canEdit" /></Field>
+				</section>
+				<section class="fs">
+					<h4 class="fs__title">Работа</h4>
+					<div class="two">
+						<Field label="Табельный №"><Input v-model="form.tab_number" inputmode="numeric" :disabled="!canEdit" /></Field>
+						<Field label="Организация"><Input v-model="form.company" placeholder="АО «Хиагда»" :disabled="!canEdit" /></Field>
+					</div>
+					<Field label="Подразделение"><Input v-model="form.department" :disabled="!canEdit" /></Field>
+					<Field label="Должность"><Input v-model="form.position" :disabled="!canEdit" /></Field>
+				</section>
+				<section class="fs">
+					<h4 class="fs__title">Контакты и заметки</h4>
+					<Field label="Телефон"><Input v-model="form.phone" type="tel" placeholder="+7 …" :disabled="!canEdit" /></Field>
+					<Field label="Примечание" hint="Видно только персоналу"><Textarea v-model="form.note" :rows="3" :disabled="!canEdit" /></Field>
+				</section>
 			</template>
 
 			<template v-else-if="profileTab === 'access'">
-				<div v-if="profile.account_username" class="access-box">
-					<div class="spread">
-						<div>
-							<div class="muted" style="font-size: var(--font-size-xs)">Логин вахтовика</div>
-							<b class="contrast" style="font-size: var(--font-size-lg)">{{ profile.account_username }}</b>
+				<div v-if="profile.account_username" class="acc">
+					<div class="acc__row">
+						<div class="acc__icon"><Icon name="key" size="1.2rem" /></div>
+						<div class="grow">
+							<div class="acc__label">Логин для входа</div>
+							<div class="acc__login">{{ profile.account_username }}</div>
 						</div>
-						<Chip v-if="profile.account_must_change" color="var(--color-orange)" dot>пароль не сменён</Chip>
-						<Chip v-else color="var(--color-green)" dot>активен</Chip>
+						<IconButton icon="copy" label="Скопировать логин" @click="copyText(profile.account_username)" />
 					</div>
-					<div class="row wrap" style="margin-top: var(--gap-md)">
-						<Button icon="rotate-cw" @click="issueAccount(true)">Сбросить пароль</Button>
-						<Button variant="danger" icon="log-out" @click="revokeAccount">Убрать доступ</Button>
+					<div class="acc__state" :class="profile.account_must_change ? 'warn' : 'ok'">
+						<Icon :name="profile.account_must_change ? 'clock' : 'check'" />
+						{{ profile.account_must_change ? "Вахтовик ещё не входил — выданный пароль не сменён" : "Вахтовик входил и сменил пароль" }}
+					</div>
+					<div v-if="canAdmin" class="row wrap" style="gap: var(--gap-sm)">
+						<Button icon="rotate-cw" @click="issueAccount(true)">Выдать новый пароль</Button>
+						<Button variant="danger" icon="log-out" @click="revokeAccount">Закрыть доступ</Button>
 					</div>
 				</div>
-				<EmptyState v-else icon="key" title="Доступа нет" text="Вахтовик не сможет войти в свой кабинет, пока вы не выдадите доступ.">
-					<Button variant="primary" icon="key" @click="issueAccount(false)">Выдать доступ</Button>
+				<EmptyState v-else icon="key" title="Доступа в кабинет нет" text="Выдайте логин и пароль — вахтовик увидит свой номер, соседей, объявления и сможет подавать заявки на ремонт.">
+					<Button v-if="canAdmin" variant="primary" icon="key" @click="issueAccount(false)">Выдать доступ</Button>
 				</EmptyState>
+				<div class="fs__title" style="margin-top: var(--gap-sm)">В кабинете вахтовик видит</div>
+				<ul class="acc__what">
+					<li><Icon name="bed" /> свой номер, место и даты проживания</li>
+					<li><Icon name="users" /> соседей по комнате (телефон — только с их согласия)</li>
+					<li><Icon name="megaphone" /> объявления коменданта</li>
+					<li><Icon name="wrench" /> заявки на ремонт и их статус</li>
+				</ul>
 			</template>
 
 			<template v-else-if="profileTab === 'stays'">
-				<DataTable :columns="stayColumns" :rows="stays" row-key="date_from" empty-title="Размещений нет">
-					<template #cell-stage="{ row }"><StatusDot :color="row.status_color" /> {{ stageLabel[row.stage] }}</template>
-				</DataTable>
+				<EmptyState v-if="!stays.length" icon="calendar" title="Проживаний ещё не было" />
+				<ol v-else class="tl">
+					<li v-for="(s, i) in stays" :key="i" class="tl__item" :class="{ now: s === currentStay, off: s.stage === 'cancelled' }">
+						<span class="tl__dot" :style="{ background: s.status_color }" />
+						<div class="grow">
+							<div class="tl__place">{{ s.hotel_name }} · № {{ s.room_number }} · {{ s.bed_label }}</div>
+							<div class="tl__dates">{{ dd(s.date_from, true) }} – {{ dd(s.date_to, true) }} · {{ nightsBetween(s.date_from, s.date_to) }} {{ nightsWord(nightsBetween(s.date_from, s.date_to)) }}</div>
+							<div v-if="s.comment" class="tl__comment">{{ s.comment }}</div>
+						</div>
+						<Chip :color="s.status_color">{{ stageLabel[s.stage] }}</Chip>
+					</li>
+				</ol>
 			</template>
 
 			<template #foot>
 				<Button v-if="profile.id && canEdit" variant="danger" icon="trash" @click="removeResident">Удалить</Button>
 				<Button v-if="profile.id" icon="download" @click="report(profile)">Excel</Button>
-				<span style="flex: 1" />
-				<Button variant="ghost" @click="profile = null">Закрыть</Button>
-				<Button v-if="profileTab === 'data' || !profile.id" variant="primary" :loading="busy" @click="saveProfile">Сохранить</Button>
+				<span class="grow" />
+				<span v-if="dirty" class="dirty"><span class="dirty__dot" /> не сохранено</span>
+				<Button variant="ghost" @click="closeProfile">Закрыть</Button>
+				<Button v-if="canEdit && (profileTab === 'data' || !profile.id)" variant="primary" icon="check" :loading="busy" :disabled="!dirty" @click="saveProfile">Сохранить</Button>
 			</template>
 		</Drawer>
 
@@ -344,18 +448,18 @@ function fmt(d) {
 		</Drawer>
 
 		<!-- Реквизиты -->
-		<Modal v-if="creds" :title="creds.title" @close="creds = null">
-			<p class="muted" style="margin: 0">Запишите или распечатайте — пароль показывается один раз. Пользователь сменит его при первом входе.</p>
+		<Modal v-if="creds" :title="creds.title" persistent @close="closeCreds">
+			<p class="creds-hint"><Icon name="alert-triangle" /> Пароль показывается только сейчас. Распечатайте карточки или скопируйте — вахтовик сменит пароль при первом входе.</p>
 			<div class="table-scroll">
 				<table class="dt">
 					<thead><tr><th>Вахтовик</th><th>Логин</th><th>Пароль</th></tr></thead>
-					<tbody><tr v-for="c in creds.list" :key="c.username"><td>{{ c.full_name }}</td><td><b>{{ c.username }}</b></td><td><b>{{ c.password }}</b></td></tr></tbody>
+					<tbody><tr v-for="c in creds.list" :key="c.username"><td>{{ c.full_name }}</td><td><code>{{ c.username }}</code></td><td><code>{{ c.password }}</code></td></tr></tbody>
 				</table>
 			</div>
 			<template #foot>
-				<Button icon="book" @click="copyCreds">Копировать</Button>
-				<Button icon="book" @click="printCreds">Печать</Button>
-				<Button variant="primary" @click="creds = null">Готово</Button>
+				<Button icon="copy" @click="copyCreds">Копировать</Button>
+				<Button icon="printer" @click="printAll">Печать карточек</Button>
+				<Button variant="primary" @click="closeCreds">Готово</Button>
 			</template>
 		</Modal>
 	</div>
@@ -367,11 +471,214 @@ function fmt(d) {
 	grid-template-columns: 1fr 1fr;
 	gap: var(--gap-md);
 }
-.access-box {
+/* Карточка вахтовика */
+.ph {
+	display: flex;
+	gap: var(--gap-md);
+	align-items: center;
+	min-width: 0;
+}
+.ph__text {
+	min-width: 0;
+}
+.ph__name {
+	font-size: var(--font-size-lg);
+	line-height: 1.25;
+}
+.ph__sub {
+	font-size: var(--font-size-sm);
+	color: var(--color-secondary);
+	margin-top: 2px;
+}
+.ph__chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: var(--gap-sm);
+}
+.ph__tag {
+	display: inline-flex;
+	align-items: center;
+	height: 1.5rem;
+	padding: 0 8px;
+	border-radius: var(--radius-max);
+	background: var(--color-button-bg);
+	color: var(--color-base);
+	font-size: var(--font-size-xs);
+	font-weight: var(--font-weight-bold);
+}
+.now {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-md);
+	padding: var(--gap-md) var(--gap-lg);
+	border-radius: var(--radius-md);
+	background: var(--color-green-bg);
+	color: var(--color-green);
+}
+.now__place {
+	color: var(--color-contrast);
+	font-weight: var(--font-weight-bold);
+}
+.now__dates {
+	font-size: var(--font-size-sm);
+	color: var(--color-base);
+}
+.fs {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-md);
+	padding-bottom: var(--gap-lg);
+	border-bottom: 1px solid var(--color-divider);
+}
+.fs:last-of-type {
+	border-bottom: none;
+	padding-bottom: 0;
+}
+.fs__title {
+	font-size: var(--font-size-xs);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--color-secondary);
+}
+.acc {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-md);
 	padding: var(--gap-lg);
+	border-radius: var(--radius-lg);
 	background: var(--color-bg);
 	border: 1px solid var(--color-divider);
+}
+.acc__row {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-md);
+}
+.acc__icon {
+	display: grid;
+	place-items: center;
+	width: 2.6rem;
+	height: 2.6rem;
 	border-radius: var(--radius-md);
+	background: var(--color-brand-highlight);
+	color: var(--color-brand);
+}
+.acc__label {
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+}
+.acc__login {
+	font-family: var(--font-mono);
+	font-size: var(--font-size-lg);
+	font-weight: var(--font-weight-bold);
+	color: var(--color-contrast);
+}
+.acc__state {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	font-size: var(--font-size-sm);
+	padding: var(--gap-sm) var(--gap-md);
+	border-radius: var(--radius-md);
+}
+.acc__state.warn {
+	background: var(--color-orange-bg);
+	color: var(--color-orange);
+}
+.acc__state.ok {
+	background: var(--color-green-bg);
+	color: var(--color-green);
+}
+.acc__what {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	gap: var(--gap-sm);
+	font-size: var(--font-size-sm);
+	color: var(--color-secondary);
+}
+.acc__what li {
+	display: flex;
+	gap: var(--gap-sm);
+	align-items: center;
+}
+.tl {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	gap: 2px;
+}
+.tl__item {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--gap-md);
+	padding: var(--gap-md);
+	border-radius: var(--radius-md);
+	position: relative;
+}
+.tl__item:hover {
+	background: var(--color-bg);
+}
+.tl__item.now {
+	background: var(--color-green-bg);
+}
+.tl__item.off {
+	opacity: 0.55;
+}
+.tl__dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	margin-top: 6px;
+	flex-shrink: 0;
+}
+.tl__place {
+	color: var(--color-contrast);
+	font-weight: var(--font-weight-bold);
+	font-size: var(--font-size-sm);
+}
+.tl__dates {
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+}
+.tl__comment {
+	font-size: var(--font-size-xs);
+	color: var(--color-base);
+	margin-top: 2px;
+}
+.dirty {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: var(--font-size-xs);
+	color: var(--color-orange);
+	font-weight: var(--font-weight-bold);
+}
+.dirty__dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--color-orange);
+}
+.creds-hint {
+	display: flex;
+	gap: var(--gap-sm);
+	align-items: flex-start;
+	margin: 0 0 var(--gap-md);
+	padding: var(--gap-sm) var(--gap-md);
+	border-radius: var(--radius-md);
+	background: var(--color-orange-bg, var(--color-bg));
+	color: var(--color-orange);
+	font-size: var(--font-size-sm);
+}
+.dt code {
+	font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+	font-weight: 700;
+	color: var(--color-contrast);
+	letter-spacing: 0.04em;
 }
 .table-scroll {
 	overflow-x: auto;

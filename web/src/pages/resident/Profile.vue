@@ -80,7 +80,7 @@ async function changePassword() {
 			<div class="two">
 				<Field label="Табельный №"><Input :model-value="resident?.tab_number || '—'" disabled /></Field>
 				<Field label="Организация"><Input :model-value="resident?.company || '—'" disabled /></Field>
-				<Field label="Подразделение"><Input :model-value="resident?.department || '—'" disabled /></Field>
+				<Field label="Подразделение" class="full"><Input :model-value="resident?.department || '—'" disabled /></Field>
 			</div>
 			<Field label="Телефон"><Input v-model="phone" placeholder="+7 …" /></Field>
 			<div class="privacy">
@@ -91,8 +91,8 @@ async function changePassword() {
 		</Card>
 
 		<Card title="Смена пароля" stack>
-			<Field label="Текущий пароль"><Input v-model="curPass" type="password" /></Field>
-			<Field label="Новый пароль"><Input v-model="newPass" type="password" /></Field>
+			<Field label="Текущий пароль"><Input v-model="curPass" type="password" autocomplete="current-password" /></Field>
+			<Field label="Новый пароль"><Input v-model="newPass" type="password" autocomplete="new-password" /></Field>
 			<Button :loading="savingPass" @click="changePassword">Изменить пароль</Button>
 		</Card>
 	</div>
@@ -108,6 +108,9 @@ async function changePassword() {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
 	gap: var(--gap-md);
+}
+.full {
+	grid-column: 1 / -1;
 }
 .privacy {
 	padding: var(--gap-md);

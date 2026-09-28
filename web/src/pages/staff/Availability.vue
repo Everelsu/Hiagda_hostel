@@ -5,7 +5,7 @@ import { today, addDays, nightsBetween, nightsWord, dm } from "@/utils/date"
 import { useAuthStore } from "@/stores/auth"
 import PlacementModal from "@/components/PlacementModal.vue"
 import Icon from "@/components/Icon.vue"
-import { PageHeader, FilterBar, Field, Input, Select, Button, Stat, Card, EmptyState } from "@/ui"
+import { PageHeader, FilterBar, Field, Input, Select, Button, Stat, Card, EmptyState, DateRange } from "@/ui"
 
 const auth = useAuthStore()
 const canEdit = auth.can("editor")
@@ -39,7 +39,8 @@ async function search() {
 	}
 }
 function place(room, bed) {
-	placement.value = { bed: { id: bed.bed_id, label: `Номер № ${room.number} · ${bed.bed_label}` } }
+	// Период поиска сразу переносим в бронь: ради него место и искали
+	placement.value = { bed: { id: bed.bed_id, label: `Номер № ${room.number} · ${bed.bed_label}` }, date: from.value, dateTo: to.value }
 }
 function onSaved() {
 	placement.value = null
@@ -52,8 +53,7 @@ function onSaved() {
 		<PageHeader title="Свободные места" subtitle="Какие места свободны все ночи выбранного периода — чтобы сразу заселить вахту" icon="search" />
 
 		<FilterBar>
-			<Field label="Заезд"><Input v-model="from" type="date" @change="search" /></Field>
-			<Field label="Выезд"><Input v-model="to" type="date" @change="search" /></Field>
+			<Field label="Заезд — выезд"><DateRange v-model:from="from" v-model:to="to" style="min-width: 17rem" @change="search" /></Field>
 			<Field label="Гостиница"><Select v-model="hotelId" @change="search"><option value="">Все</option><option v-for="h in hotels" :key="h.id" :value="h.id">{{ h.name }}</option></Select></Field>
 			<Field label="Тип номера"><Select v-model="classId" @change="search"><option value="">Все</option><option v-for="c in classes" :key="c.id" :value="c.id">{{ c.name }}</option></Select></Field>
 			<Button variant="brand" icon="search" @click="search">Найти</Button>

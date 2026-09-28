@@ -4,7 +4,7 @@ import { api, post, put, del } from "@/api/client"
 import { addDays, nightsBetween, nightsWord } from "@/utils/date"
 import { toast } from "@/toast"
 import Modal from "@/components/Modal.vue"
-import { Field, Input, Select, Textarea, Button, Avatar, Chip, confirm } from "@/ui"
+import { Field, Input, Select, Textarea, Button, Avatar, Chip, confirm, DateRange } from "@/ui"
 
 const props = defineProps({
 	bed: { type: Object, required: true },
@@ -146,10 +146,7 @@ async function remove() {
 			</template>
 		</Field>
 
-		<div class="two">
-			<Field label="Заезд"><Input v-model="dateFrom" type="date" /></Field>
-			<Field label="Выезд"><Input v-model="dateTo" type="date" :min="dateFrom" /></Field>
-		</div>
+		<Field label="Заезд — выезд"><DateRange v-model:from="dateFrom" v-model:to="dateTo" style="width: 100%" /></Field>
 		<p class="nights" :class="{ bad: !(nights >= 1) }">
 			{{ nightsLabel }}<template v-if="nights >= 1"> · в день выезда место освобождается и уже доступно следующему</template>
 		</p>

@@ -37,6 +37,8 @@ html,
 	--color-brand-highlight: rgba(142, 50, 243, 0.25);
 
 	--color-red-bg: rgba(203, 34, 69, 0.1);
+	--color-orange-bg: rgba(224, 131, 37, 0.12);
+	--color-blue-bg: rgba(31, 104, 192, 0.1);
 	--color-green-bg: rgba(0, 175, 92, 0.1);
 
 	--shadow-floating: hsla(0, 0%, 0%, 0.1) 0px 4px 6px -1px, hsla(0, 0%, 0%, 0.1) 0px 2px 4px -1px;
@@ -82,6 +84,8 @@ html,
 	--color-brand-highlight: rgba(199, 138, 255, 0.25);
 
 	--color-red-bg: rgba(255, 73, 110, 0.2);
+	--color-orange-bg: rgba(255, 163, 71, 0.15);
+	--color-blue-bg: rgba(79, 156, 255, 0.15);
 	--color-green-bg: rgba(27, 217, 106, 0.2);
 
 	--shadow-floating: hsla(0, 0%, 0%, 0.1) 0px 4px 6px -1px, rgba(0, 0, 0, 0.06) 0px 2px 4px -1px;
@@ -118,6 +122,8 @@ html {
 	--control-h-lg: 2.75rem;
 
 	--focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-brand);
+
+	--font-mono: "Cascadia Mono", ui-monospace, Consolas, monospace;
 
 	--speed-fast: 100ms;
 	--speed: 180ms;

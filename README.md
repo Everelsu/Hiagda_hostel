@@ -32,7 +32,43 @@
 
 Отзывы раздельные: **о номере** (что чинить) и **о доме** (бытовые условия) — рейтинги не смешиваются.
 
-## Запуск
+## Быстрый деплой (Docker)
+
+Нужен только Docker с Compose. PostgreSQL, сборка фронтенда и ежедневные бэкапы — внутри.
+
+```bash
+git clone … nochotel && cd nochotel
+echo "PGPASSWORD=$(openssl rand -hex 16)" > .env
+docker compose up -d --build
+```
+
+Приложение — на `http://сервер:3000` (порт меняется `PORT=` в `.env`). При первом входе
+откроется форма **«Создать администратора»**. Справочники (статусы, типы номеров, удобства)
+создаются сами; демо-гостиница — по желанию: `docker compose exec app node server/seed.js`.
+
+| Что | Где |
+| --- | --- |
+| База PostgreSQL | том `nochotel_pgdata` |
+| Фото и вложения | `./data` |
+| Резервные копии | `./backups` — каждый день в 03:00, хранятся 14 последних |
+
+Обновление: `git pull && docker compose up -d --build`. Схема БД мигрирует сама при старте.
+
+Копиями удобнее всего управлять из интерфейса: **Администрирование → Резервные копии**
+(снять, скачать архив, закрепить, восстановить, удалить). Из консоли — так:
+
+```bash
+docker compose exec app node scripts/backup.js
+docker compose stop app
+docker compose run --rm app node scripts/restore.js backups/2026-09-09_0300 --yes
+docker compose start app
+```
+
+Время бэкапа — `BACKUP_AT=03:00`, часовой пояс — `TZ=Asia/Irkutsk`, количество копий —
+`BACKUP_KEEP=14` (всё в `.env`). HTTPS — через reverse-proxy (nginx, Caddy) перед портом 3000.
+Не храните единственную копию на том же сервере: забирайте `./backups` на другой диск или машину.
+
+## Запуск без Docker
 
 Нужны [Node.js](https://nodejs.org/) LTS (18+) и PostgreSQL 13+.
 
@@ -91,7 +127,7 @@ npm test           # брони, перенос, права ролей, план
 
 3. Держите процесс живым через systemd (unit ниже) и поставьте перед ним
    reverse-proxy (nginx) с HTTPS.
-4. Настройте резервное копирование по расписанию — см. отдельный раздел.
+4. Резервные копии сервер снимает сам раз в сутки — см. отдельный раздел.
 
 ### systemd
 
@@ -99,7 +135,7 @@ npm test           # брони, перенос, права ролей, план
 
 ```ini
 [Unit]
-Description=NochOtel
+Description=Хиагда — учёт номерного фонда
 After=network.target postgresql.service
 Requires=postgresql.service
 
@@ -128,6 +164,20 @@ sudo systemctl daemon-reload && sudo systemctl enable --now nochotel
 
 ## Резервное копирование
 
+### Из интерфейса
+
+Раздел **Администрирование → Резервные копии** (только для администратора): когда была
+последняя копия и когда следующая, «Снять копию сейчас», скачать архив копии (чтобы
+хранить вне сервера), закрепить, восстановить, удалить. Защита от случайностей:
+
+- восстановление и удаление требуют ввести имя копии;
+- **перед восстановлением сервер сам снимает копию текущего состояния и закрепляет её** —
+  любое восстановление можно откатить;
+- закреплённую копию не удаляет ни автоочистка (`BACKUP_KEEP`), ни кнопка — сначала открепить;
+- единственную копию удалить нельзя; одновременно идёт только одна операция.
+
+### Из консоли
+
 ```bash
 npm run backup     # снять копию
 npm run restore -- backups/2026-09-09_0300          # показать, что будет сделано
@@ -146,7 +196,7 @@ backups/2026-09-09_0300/
 Дамп сразу проверяется на читаемость (`pg_restore --list`), а при восстановлении
 сверяется контрольная сумма — повреждённый файл не попадёт в базу. Восстановление
 идёт одной транзакцией: при сбое данные остаются нетронутыми. Прежний `data/` не
-удаляется, а переименовывается в `data.before-restore-…`.
+теряется — его копия кладётся в `backups/data.before-restore-…`.
 
 Настройки — в `.env`: `BACKUP_DIR` (куда складывать, по умолчанию `./backups`),
 `BACKUP_KEEP` (сколько копий хранить, по умолчанию 14), `PG_BIN` (каталог с
@@ -154,37 +204,11 @@ backups/2026-09-09_0300/
 
 ### По расписанию
 
-`/etc/systemd/system/nochotel-backup.service` и `…timer`:
-
-```ini
-[Unit]
-Description=Резервная копия NochOtel
-
-[Service]
-Type=oneshot
-User=nochotel
-WorkingDirectory=/opt/nochotel
-EnvironmentFile=/opt/nochotel/.env
-ExecStart=/usr/bin/node scripts/backup.js
-```
-
-```ini
-[Unit]
-Description=Ежедневная резервная копия NochOtel
-
-[Timer]
-OnCalendar=*-*-* 03:00:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-```bash
-sudo systemctl enable --now nochotel-backup.timer
-```
-
-Либо через cron: `0 3 * * * cd /opt/nochotel && /usr/bin/node scripts/backup.js`.
+Запущенный сервер сам снимает копию каждый день в `BACKUP_AT` (по умолчанию `03:00`
+по часам сервера) и удаляет лишние сверх `BACKUP_KEEP`. Нужны `pg_dump`/`pg_restore`
+(в Docker-образе уже есть). Если удобнее внешний планировщик — задайте `BACKUP_AT=off`
+и повесьте `node scripts/backup.js` на cron:
+`0 3 * * * cd /opt/nochotel && /usr/bin/node scripts/backup.js`.
 
 Копии содержат персональные данные проживающих — каталог создаётся с правами `0700`,
 дамп `0600`. Храните хотя бы одну копию вне сервера приложения.
@@ -208,6 +232,7 @@ node scripts/migrate-sqlite-to-pg.js --yes           # перенести
 ```
 server/      Express API + PostgreSQL (index.js, db.js, auth.js, env.js, seed.js)
 scripts/     backup.js, restore.js, migrate-sqlite-to-pg.js
+Dockerfile, docker-compose.yml   деплой одной командой (PostgreSQL + приложение)
 web/         Vue 3 + Vite фронтенд
   src/
     pages/     Login, staff/*, resident/* (Home, Room, Plan, Hotel, Issues, Profile)

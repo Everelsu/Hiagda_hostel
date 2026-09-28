@@ -39,6 +39,8 @@ async function seed() {
 			console.log("Создан каталог удобств")
 		}
 
+		// --base: только справочники (так seed вызывается при каждом старте в Docker).
+		if (process.argv.includes("--base")) return
 		if ((await t.prepare("SELECT COUNT(*) c FROM hotels").get()).c > 0) return
 
 		const hotelId = (
@@ -159,7 +161,7 @@ async function seed() {
 		console.log("Создан администратор: логин admin / пароль admin")
 
 		const annIns = t.prepare("INSERT INTO announcements (hotel_id, title, body, pinned, created_by) VALUES (?,?,?,?,?)")
-		await annIns.run(null, "Добро пожаловать в NochOtel", "Здесь появляются объявления коменданта: отключения воды, график бани, выезды транспорта.", 1, adminId)
+		await annIns.run(null, "Добро пожаловать в кабинет вахтовика", "Здесь появляются объявления коменданта: отключения воды, график бани, выезды транспорта.", 1, adminId)
 		await annIns.run(hotelId, "Плановое отключение горячей воды", "18 числа с 10:00 до 16:00 в доме №1 не будет горячей воды. Приносим извинения.", 0, adminId)
 
 		await t.prepare("INSERT INTO reviews (hotel_id, resident_id, rating, text) VALUES (?,?,?,?)").run(

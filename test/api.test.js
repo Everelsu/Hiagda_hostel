@@ -127,6 +127,21 @@ test("пересменка: заезд в день выезда предыдущ
 	assert.equal(back2back.status, 200, "день выезда должен освобождать место для нового заезда")
 })
 
+test("аналитика за период: ночи считаются только внутри периода", async () => {
+	// Брони 01–10 и 10–15 сентября на одном месте; период 05–12 включительно = 8 дней.
+	// Ночи внутри периода: 05..09 (5) + 10..12 (3) = 8. Мест в номере 2 → загрузка 50%.
+	const r = await call("GET", "/analytics?from=2026-09-05&to=2026-09-12", { token: adminToken })
+	assert.equal(r.status, 200)
+	assert.equal(r.json.days, 8)
+	assert.equal(r.json.totals.bedNights, 8)
+	assert.equal(r.json.byHotel[0].bed_nights, 8, "пересечение броней с периодом")
+	assert.equal(r.json.totals.avgLoad, 50)
+	assert.equal(r.json.totals.arrivals, 1)
+	assert.equal(r.json.totals.departures, 1)
+	assert.equal(r.json.totals.people, 1)
+	assert.equal(r.json.byCompany[0].bed_nights, 8)
+})
+
 test("роль «Просмотр» читает данные, но не может редактировать", async () => {
 	const created = await call("POST", "/users", {
 		token: adminToken,

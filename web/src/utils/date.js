@@ -27,3 +27,8 @@ export function nightsWord(n) {
 
 // «2026-09-07» → «07.09.2026» — для показа человеку
 export const dm = (d) => (d ? String(d).split("-").reverse().join(".") : "")
+
+// Метки времени из БД — «ГГГГ-ММ-ДД ЧЧ:ММ:СС» в UTC → местное время человека
+export function dateTime(d, opts = { dateStyle: "medium", timeStyle: "short" }) {
+	return d ? new Date(String(d).replace(" ", "T") + "Z").toLocaleString("ru-RU", opts) : ""
+}

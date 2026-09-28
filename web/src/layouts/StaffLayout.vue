@@ -6,7 +6,8 @@ import { useCounters } from "@/stores/counters"
 import { onRealtime } from "@/realtime"
 import { STAFF_NAV } from "@/config/nav"
 import Icon from "@/components/Icon.vue"
-import { IconButton, Badge } from "@/ui"
+import CommandPalette from "@/components/CommandPalette.vue"
+import { IconButton, Badge, Avatar } from "@/ui"
 
 const router = useRouter()
 const route = useRoute()
@@ -15,6 +16,8 @@ const counters = useCounters()
 
 const theme = ref(document.documentElement.getAttribute("data-theme") || "dark")
 const mobileOpen = ref(false)
+const paletteOpen = ref(false)
+const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 const ROLE_LABEL = { admin: "Администратор", editor: "Редактор", observer: "Просмотр", maintenance: "Ремонтная служба", viewer: "Вахтовик" }
 
 // Ремонтнику показываем только его разделы, остальным — всё, кроме админских
@@ -26,8 +29,25 @@ const groups = computed(() =>
 )
 const pageTitle = computed(() => {
 	for (const g of STAFF_NAV) for (const i of g.items) if (route.path.startsWith(i.to)) return i.label
-	return "NochOtel"
+	return "Хиагда"
 })
+
+const palettePages = computed(() => groups.value.flatMap((g) => g.items.map((i) => ({ ...i, group: g.heading }))))
+const paletteActions = computed(() => [
+	{ id: "theme", icon: theme.value === "dark" ? "sun" : "moon", label: theme.value === "dark" ? "Светлая тема" : "Тёмная тема", run: toggleTheme },
+	{ id: "logout", icon: "log-out", label: "Выйти из системы", run: logout },
+])
+
+// Ctrl+K / ⌘K — в любом месте; «/» — когда фокус не в поле ввода
+function onGlobalKey(e) {
+	const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable
+	if (((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "л")) || (e.key === "/" && !typing)) {
+		e.preventDefault()
+		paletteOpen.value = !paletteOpen.value
+	}
+}
+onMounted(() => window.addEventListener("keydown", onGlobalKey))
+onUnmounted(() => window.removeEventListener("keydown", onGlobalKey))
 
 function badgeValue(item) {
 	return item.badge ? counters[item.badge] : 0
@@ -71,8 +91,11 @@ onUnmounted(stopRealtime)
 			</nav>
 			<div class="sidebar__foot">
 				<div class="user-box">
-					<div class="contrast" style="font-weight: 700">{{ auth.user?.full_name || auth.user?.username }}</div>
-					<div class="muted" style="font-size: var(--font-size-xs)">{{ ROLE_LABEL[auth.user?.role] }}</div>
+					<Avatar :name="auth.user?.full_name || auth.user?.username" size="2.1rem" />
+					<div class="user-box__text">
+						<div class="contrast user-box__name">{{ auth.user?.full_name || auth.user?.username }}</div>
+						<div class="muted" style="font-size: var(--font-size-xs)">{{ ROLE_LABEL[auth.user?.role] }}</div>
+					</div>
 				</div>
 				<button class="navbtn" @click="logout"><Icon name="log-out" /> Выход</button>
 			</div>
@@ -82,13 +105,24 @@ onUnmounted(stopRealtime)
 
 		<div class="main">
 			<header class="topbar">
-				<IconButton class="topbar__burger" icon="layout" label="Меню" @click="mobileOpen = true" />
+				<IconButton class="topbar__burger" icon="menu" label="Меню" @click="mobileOpen = true" />
 				<h2 class="topbar__title">{{ pageTitle }}</h2>
+				<button type="button" class="topsearch" @click="paletteOpen = true">
+					<Icon name="search" />
+					<span class="topsearch__text">Поиск разделов и вахтовиков…</span>
+					<kbd>{{ isMac ? "⌘" : "Ctrl" }} K</kbd>
+				</button>
 				<div class="spacer" />
 				<IconButton :icon="theme === 'dark' ? 'moon' : 'sun'" :label="theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'" @click="toggleTheme" />
 			</header>
-			<main class="content"><router-view /></main>
+			<main class="content">
+				<router-view v-slot="{ Component, route: r }">
+					<Transition name="page" mode="out-in"><component :is="Component" :key="r.path" /></Transition>
+				</router-view>
+			</main>
 		</div>
+
+		<CommandPalette v-model="paletteOpen" :pages="palettePages" :actions="paletteActions" :search-residents="!auth.isRepairOnly" />
 	</div>
 </template>
 
@@ -159,7 +193,74 @@ onUnmounted(stopRealtime)
 	padding-top: var(--gap-md);
 }
 .user-box {
-	padding: var(--gap-sm) var(--gap-md);
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	padding: var(--gap-sm) var(--gap-sm);
+	min-width: 0;
+}
+.user-box__text {
+	min-width: 0;
+}
+.user-box__name {
+	font-weight: 700;
+	font-size: var(--font-size-sm);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.topsearch {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-sm);
+	width: min(420px, 100%);
+	height: var(--control-h-md);
+	padding: 0 var(--gap-sm) 0 var(--gap-md);
+	border: 1px solid var(--color-button-border);
+	border-radius: var(--radius-md);
+	background: var(--color-bg);
+	color: var(--color-secondary);
+	font: inherit;
+	font-size: var(--font-size-sm);
+	cursor: pointer;
+	transition: border-color var(--speed-fast), color var(--speed-fast);
+}
+.topsearch:hover {
+	border-color: var(--color-brand);
+	color: var(--color-contrast);
+}
+.topsearch__text {
+	flex: 1;
+	text-align: left;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.topsearch kbd {
+	padding: 0 6px;
+	border: 1px solid var(--color-button-border);
+	border-bottom-width: 2px;
+	border-radius: 5px;
+	font-family: inherit;
+	font-size: 0.7rem;
+	line-height: 1.6;
+}
+/* На десктопе название раздела уже крупно в шапке страницы — сверху оставляем поиск */
+@media (min-width: 861px) {
+	.topbar__title {
+		display: none;
+	}
+}
+.page-enter-active,
+.page-leave-active {
+	transition: opacity 120ms ease, transform 120ms ease;
+}
+.page-enter-from {
+	opacity: 0;
+	transform: translateY(4px);
+}
+.page-leave-to {
+	opacity: 0;
 }
 .main {
 	display: flex;
@@ -223,6 +324,16 @@ onUnmounted(stopRealtime)
 	}
 	.topbar__burger {
 		display: inline-grid;
+	}
+	.topsearch {
+		width: auto;
+		border: none;
+		background: transparent;
+		padding: 0 var(--gap-sm);
+	}
+	.topsearch__text,
+	.topsearch kbd {
+		display: none;
 	}
 	.content {
 		padding: var(--gap-lg);

@@ -113,7 +113,7 @@ async function saveHotel() {
 	}
 }
 async function removeHotel(h) {
-	if (!(await confirm({ title: `Удалить «${h.name}»?`, message: "Гостиница удалится со всеми номерами.", danger: true, confirmLabel: "Удалить" }))) return
+	if (!(await confirm({ title: `Удалить «${h.name}»?`, message: "Гостиница удалится вместе со всеми номерами, местами и историей размещений. Это необратимо.", danger: true, confirmLabel: "Удалить гостиницу", typeText: h.name }))) return
 	await del("/hotels/" + h.id)
 	toast.success("Удалено")
 	loadAll()

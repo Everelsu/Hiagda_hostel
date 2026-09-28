@@ -15,6 +15,8 @@ const fullName = ref("")
 const needsSetup = ref(false)
 const err = ref("")
 const busy = ref(false)
+const capsLock = ref(false)
+const onPassKey = (e) => (capsLock.value = !!e.getModifierState?.("CapsLock"))
 
 onMounted(async () => {
 	try {
@@ -58,10 +60,20 @@ async function submit() {
 
 				<div class="login__fields">
 					<Field label="Логин">
-						<Input v-model="username" :invalid="!!err" />
+						<Input v-model="username" :invalid="!!err" name="username" autocomplete="username" autofocus required />
 					</Field>
 					<Field label="Пароль">
-						<Input v-model="password" type="password" :invalid="!!err" />
+						<Input
+							v-model="password"
+							type="password"
+							:invalid="!!err"
+							name="password"
+							:autocomplete="needsSetup ? 'new-password' : 'current-password'"
+							required
+							@keyup="onPassKey"
+							@keydown="onPassKey"
+						/>
+						<span v-if="capsLock" class="login__caps">Включён Caps Lock</span>
 					</Field>
 					<Field v-if="needsSetup" label="ФИО администратора">
 						<Input v-model="fullName" />
@@ -108,6 +120,13 @@ async function submit() {
 .login__sub {
 	margin: var(--gap-md) 0 0;
 	color: var(--color-secondary);
+}
+.login__caps {
+	display: block;
+	margin-top: 4px;
+	font-size: var(--font-size-xs);
+	color: var(--color-orange);
+	font-weight: var(--font-weight-bold);
 }
 .login__formside {
 	display: flex;

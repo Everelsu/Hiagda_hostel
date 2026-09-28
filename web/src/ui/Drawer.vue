@@ -6,7 +6,8 @@ defineProps({ title: String, subtitle: String, width: { type: String, default: "
 const emit = defineEmits(["close"])
 
 function onKey(e) {
-	if (e.key === "Escape") emit("close")
+	// Esc, уже обработанный диалогом подтверждения или выпадашкой, сюда не доходит
+	if (e.key === "Escape" && !e.defaultPrevented) emit("close")
 }
 onMounted(() => {
 	document.addEventListener("keydown", onKey)
@@ -25,8 +26,10 @@ onUnmounted(() => {
 			<aside class="k-drawer__panel" :style="{ width }" role="dialog" aria-modal="true">
 				<header class="k-drawer__head">
 					<div class="k-drawer__titles">
-						<h3 class="k-drawer__title">{{ title }}</h3>
-						<p v-if="subtitle" class="k-drawer__subtitle">{{ subtitle }}</p>
+						<slot name="head">
+							<h3 class="k-drawer__title">{{ title }}</h3>
+							<p v-if="subtitle" class="k-drawer__subtitle">{{ subtitle }}</p>
+						</slot>
 					</div>
 					<IconButton icon="x" label="Закрыть" @click="emit('close')" />
 				</header>
@@ -64,11 +67,15 @@ onUnmounted(() => {
 }
 .k-drawer__head {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	justify-content: space-between;
 	gap: var(--gap-md);
 	padding: var(--gap-lg) var(--gap-xl);
 	border-bottom: 1px solid var(--color-divider);
+}
+.k-drawer__titles {
+	flex: 1;
+	min-width: 0;
 }
 .k-drawer__title {
 	font-size: var(--font-size-lg);

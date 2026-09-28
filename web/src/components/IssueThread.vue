@@ -1,4 +1,5 @@
 <script setup>
+import { dateTime } from "@/utils/date"
 import { ref, onMounted, onUnmounted, watch } from "vue"
 import { api, post } from "@/api/client"
 import { toast } from "@/toast"
@@ -38,9 +39,7 @@ async function send() {
 	}
 }
 const isStaff = (r) => r === "admin" || r === "editor"
-function fmt(d) {
-	return d ? new Date(d.replace(" ", "T") + "Z").toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : ""
-}
+const fmt = (d) => dateTime(d, { dateStyle: "short", timeStyle: "short" })
 </script>
 
 <template>

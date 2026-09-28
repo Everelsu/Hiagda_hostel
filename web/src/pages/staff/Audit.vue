@@ -2,6 +2,7 @@
 import { ref, onMounted } from "vue"
 import { api } from "@/api/client"
 import { PageHeader, DataTable } from "@/ui"
+import { dateTime } from "@/utils/date"
 
 const rows = ref([])
 const loading = ref(true)
@@ -25,7 +26,7 @@ onMounted(async () => {
 	<div class="grid">
 		<PageHeader title="Журнал действий" subtitle="Кто и что менял в системе" icon="info" />
 		<DataTable :columns="columns" :rows="rows" :loading="loading" empty-title="Записей нет">
-			<template #cell-created_at="{ value }"><span class="muted">{{ value }}</span></template>
+			<template #cell-created_at="{ value }"><span class="muted nowrap">{{ dateTime(value) }}</span></template>
 			<template #cell-username="{ value }">{{ value || "—" }}</template>
 			<template #cell-path="{ row }"><span class="muted">{{ row.method }} {{ row.path }}</span></template>
 		</DataTable>

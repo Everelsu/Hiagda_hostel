@@ -32,6 +32,9 @@ export const STAFF_NAV = [
 	{
 		heading: "Администрирование",
 		admin: true,
-		items: [{ to: "/app/audit", icon: "info", label: "Журнал действий" }],
+		items: [
+			{ to: "/app/backups", icon: "database", label: "Резервные копии" },
+			{ to: "/app/audit", icon: "info", label: "Журнал действий" },
+		],
 	},
 ]

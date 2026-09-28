@@ -1,9 +1,10 @@
 <script setup>
+import { dateTime as fmt } from "@/utils/date"
 import { ref, onMounted } from "vue"
 import { api, post, put, del } from "@/api/client"
 import { toast } from "@/toast"
 import Icon from "@/components/Icon.vue"
-import { PageHeader, Card, Button, IconButton, Drawer, Field, Input, Textarea, Select, Switch, EmptyState, Skeleton, confirm } from "@/ui"
+import { PageHeader, Card, Button, IconButton, Drawer, Field, Input, Textarea, Select, Switch, EmptyState, Skeleton, Chip, confirm } from "@/ui"
 
 const items = ref([])
 const hotels = ref([])
@@ -54,9 +55,6 @@ async function remove(a) {
 		toast.error(e.message)
 	}
 }
-function fmt(d) {
-	return d ? new Date(d.replace(" ", "T") + "Z").toLocaleString("ru-RU", { dateStyle: "medium", timeStyle: "short" }) : ""
-}
 </script>
 
 <template>
@@ -71,18 +69,18 @@ function fmt(d) {
 		</Card>
 		<div v-else class="ann-grid">
 			<Card v-for="a in items" :key="a.id" pad="lg">
-				<template #actions>
-					<IconButton icon="pencil" label="Изменить" @click="open(a)" />
-					<IconButton icon="trash" label="Удалить" variant="danger" @click="remove(a)" />
+				<template #title>
+					<h3 class="ann-title"><Icon v-if="a.pinned" name="pin" class="ann-pin" />{{ a.title }}</h3>
+					<div class="ann-meta">
+						<Chip :color="a.hotel_name ? 'var(--color-blue)' : 'var(--color-brand)'">{{ a.hotel_name || "Все гостиницы" }}</Chip>
+						<span>{{ fmt(a.created_at) }}<template v-if="a.author"> · {{ a.author }}</template></span>
+					</div>
 				</template>
-				<div class="row" style="gap: var(--gap-sm)">
-					<Icon v-if="a.pinned" name="pin" style="color: var(--color-brand)" />
-					<span class="contrast" style="font-weight: 700; font-size: var(--font-size-lg)">{{ a.title }}</span>
-				</div>
-				<div class="muted" style="font-size: var(--font-size-xs); margin-top: 2px">
-					{{ a.hotel_name || "Все гостиницы" }} · {{ fmt(a.created_at) }}<template v-if="a.author"> · {{ a.author }}</template>
-				</div>
-				<p style="margin: var(--gap-sm) 0 0; white-space: pre-wrap">{{ a.body }}</p>
+				<template #actions>
+					<IconButton icon="pencil" label="Изменить" size="sm" @click="open(a)" />
+					<IconButton icon="trash" label="Удалить" size="sm" variant="danger" @click="remove(a)" />
+				</template>
+				<p class="ann-body">{{ a.body }}</p>
 			</Card>
 		</div>
 
@@ -105,6 +103,27 @@ function fmt(d) {
 </template>
 
 <style scoped>
+.ann-title {
+	font-size: var(--font-size-lg);
+	line-height: 1.3;
+}
+.ann-pin {
+	color: var(--color-brand);
+	margin-right: 6px;
+}
+.ann-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px var(--gap-sm);
+	margin-top: 6px;
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+}
+.ann-body {
+	margin: 0;
+	white-space: pre-wrap;
+}
 .ann-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));

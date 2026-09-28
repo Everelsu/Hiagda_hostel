@@ -101,7 +101,7 @@ function fmtLong(d) {
 			<section v-if="hotel" class="facts">
 				<a v-if="hotel.phone" :href="`tel:${hotel.phone}`" class="fact">
 					<Icon name="phone" />
-					<span><b>Комендант</b>{{ hotel.phone }}</span>
+					<span><b>Комендант</b><span class="nowrap">{{ hotel.phone }}</span></span>
 				</a>
 				<div v-if="hotel.check_out" class="fact">
 					<Icon name="clock" />
@@ -289,7 +289,7 @@ function fmtLong(d) {
 	color: var(--color-base);
 	font-size: var(--font-size-sm);
 }
-.fact:hover {
+a.fact:hover {
 	border-color: var(--color-brand);
 }
 .fact :deep(svg) {
@@ -409,11 +409,20 @@ function fmtLong(d) {
 	.room-no {
 		font-size: 1.6rem;
 	}
+	/* Счётчик — строкой на всю ширину, а не одинокой плиткой под номером */
 	.countdown {
-		min-width: 84px;
+		flex-basis: 100%;
+		grid-auto-flow: column;
+		justify-content: start;
+		align-items: baseline;
+		gap: 6px;
+	}
+	.cd-top,
+	.cd-sub {
+		font-size: var(--font-size-sm);
 	}
 	.cd-big {
-		font-size: 1.6rem;
+		font-size: 1.4rem;
 	}
 }
 </style>

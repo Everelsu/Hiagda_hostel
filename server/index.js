@@ -14,6 +14,7 @@ const db = require("./db")
 const { sign, authenticate, requireRole, requireStaff, requireRepair, canRepair } = require("./auth")
 const { createRealtimeServer, STAFF_ROLES } = require("./realtime")
 const { detectColumns, isFio, titleCase } = require("./residents-import")
+const backups = require("./backups")
 
 let realtime = null
 const broadcast = (type, payload, canReceive) => realtime?.broadcast(type, payload, canReceive)
@@ -185,11 +186,13 @@ const AUDIT_LABELS = [
 	[/^\/users/, "Пользователь"],
 	[/^\/import/, "Импорт"],
 	[/^\/me\/password/, "Пароль"],
+	[/^\/admin\/backups/, "Резервная копия"],
 ]
 const AUDIT_VERB = { POST: "создание", PUT: "изменение", DELETE: "удаление" }
 function auditSummary(req) {
 	const entity = (AUDIT_LABELS.find(([re]) => re.test(req.path)) || [, "Запись"])[1];
 	if (entity === "Заявка на ремонт" && req.method === "POST") return "Подана заявка на ремонт";
+	if (entity === "Резервная копия" && req.path.endsWith("/restore")) return "Восстановление из резервной копии";
 	if (entity === "Размещение") {
 		if (req.method === "DELETE" || (req.method === "PUT" && req.body?.stage === "cancelled")) {
 			return "Размещение: отмена брони";
@@ -199,7 +202,8 @@ function auditSummary(req) {
 }
 
 api.use((req, res, next) => {
-	if (["POST", "PUT", "DELETE"].includes(req.method)) {
+	// Отметка «объявления прочитаны» — не изменение данных, журнал ею не засоряем.
+	if (["POST", "PUT", "DELETE"].includes(req.method) && req.path !== "/me/announcements/seen") {
 		const orig = res.json.bind(res)
 		res.json = (body) => {
 			if (res.statusCode < 400) {
@@ -703,6 +707,8 @@ api.delete("/info/:id", requireRole("editor"), async (req, res) => {
 	res.json({ ok: true })
 })
 
+api.use("/admin/backups", requireRole("admin"), backups.router)
+
 api.get("/audit", requireRole("admin"), async (req, res) => {
 	const limit = Math.min(500, Number(req.query.limit) || 200)
 	res.json(await db.prepare("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?").all(limit))
@@ -740,7 +746,7 @@ api.get("/journal", async (req, res) => {
 		args.push(req.query.to, req.query.from)
 	}
 	if (req.query.q) {
-		filters.push("(r.full_name LIKE ? OR rm.number LIKE ? OR r.company LIKE ?)")
+		filters.push("(r.full_name ILIKE ? OR rm.number ILIKE ? OR r.company ILIKE ?)")
 		args.push(`%${req.query.q}%`, `%${req.query.q}%`, `%${req.query.q}%`)
 	}
 	if (req.query.stage) {
@@ -820,7 +826,7 @@ api.get("/dashboard", async (req, res) => {
 	for (let i = 0; i < 14; i++) {
 		const day = addDays(today, i)
 		const occ = (await trendStmt.get(day, day)).c
-		trend.push({ date: day, occupied: occ, load: tBeds ? Math.round((occ / tBeds) * 100) : 0 })
+		trend.push({ date: day, occupied: occ, free: tBeds - occ, load: tBeds ? Math.round((occ / tBeds) * 100) : 0 })
 	}
 
 	const stageRow = await db
@@ -842,7 +848,7 @@ api.get("/dashboard", async (req, res) => {
 	const countOn = async (col) =>
 		(await db.prepare(`SELECT COUNT(*) c FROM placements WHERE ${col} = ? AND stage <> 'cancelled'`).get(today)).c
 	const moveBase = `
-		SELECT p.date_from, p.date_to, r.full_name AS resident_name,
+		SELECT p.id, p.stage, p.date_from, p.date_to, r.full_name AS resident_name, rm.hotel_id,
 			rm.number AS room_number, h.name AS hotel_name, b.label AS bed_label
 		FROM placements p
 		JOIN beds b ON b.id = p.bed_id
@@ -867,89 +873,111 @@ api.get("/dashboard", async (req, res) => {
 		hotels: hotelStats,
 		arrivals: await db.prepare(`${moveBase} WHERE p.date_from = ? AND p.stage <> 'cancelled' ORDER BY h.name, rm.number LIMIT 12`).all(today),
 		departures: await db.prepare(`${moveBase} WHERE p.date_to = ? AND p.stage <> 'cancelled' ORDER BY h.name, rm.number LIMIT 12`).all(today),
+		// Что требует действия прямо сейчас: без этого ошибки в стадиях копятся незаметно
+		attention: {
+			overdue: await db.prepare(`${moveBase} WHERE p.stage = 'checked_in' AND p.date_to < ? ORDER BY p.date_to LIMIT 20`).all(today),
+			noshow: await db.prepare(`${moveBase} WHERE p.stage = 'expected' AND p.date_from < ? ORDER BY p.date_from LIMIT 20`).all(today),
+			issuesNew: (await db.prepare("SELECT COUNT(*) c FROM room_issues WHERE status = 'Новая'").get()).c,
+			issuesOpen: (await db.prepare("SELECT COUNT(*) c FROM room_issues WHERE status <> 'Починено'").get()).c,
+			repair: (await db.prepare("SELECT COUNT(*) c FROM room_blocks WHERE date_from <= ? AND date_to >= ?").get(today, today)).c,
+		},
 	})
 })
 
 api.get("/analytics", async (req, res) => {
 	const today = todayStr()
-	const hotelFilter = req.query.hotel_id ? "AND rm.hotel_id = ?" : ""
-	const hArg = req.query.hotel_id ? [req.query.hotel_id] : []
+	const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "")
+	let from = isDate(req.query.from) ? req.query.from : today
+	let to = isDate(req.query.to) ? req.query.to : addDays(today, 29)
+	if (to < from) [from, to] = [to, from]
+	// ponytail: до года за раз — дальше график нечитаем, а запрос по дням тяжелеет
+	if (nights(from, to) > 365) to = addDays(from, 365)
+	const days = nights(from, to) + 1
+	const end = addDays(to, 1) // период [from, to] включительно = [from, end)
 
-	const bedFilter = req.query.hotel_id ? "WHERE r.hotel_id = ?" : ""
-	const tBeds = (await db.prepare(`SELECT COUNT(*) c FROM beds b JOIN rooms r ON r.id = b.room_id ${bedFilter}`).get(...hArg)).c
-	const tRooms = (await db.prepare(`SELECT COUNT(*) c FROM rooms r ${bedFilter}`).get(...hArg)).c
+	const hId = req.query.hotel_id ? Number(req.query.hotel_id) : null
+	const hf = hId ? "AND rm.hotel_id = ?" : ""
+	const h = hId ? [hId] : []
+	const joins = "FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id"
+	const live = "p.stage <> 'cancelled'"
 
-	const occStmt = db.prepare(
-		`SELECT COUNT(DISTINCT p.bed_id) c FROM placements p
-		 JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
-		 WHERE p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ? ${hotelFilter}`,
-	)
-	const occupancy = []
-	let bedNights = 0
-	for (let i = 0; i < 30; i++) {
-		const day = addDays(today, i)
-		const occ = (await occStmt.get(day, day, ...hArg)).c
-		occupancy.push({ date: day, occupied: occ, load: tBeds ? Math.round((occ / tBeds) * 100) : 0 })
-		bedNights += occ
-	}
-	const occToday = occupancy[0].occupied
+	const tBeds = (await db.prepare(`SELECT COUNT(*) c FROM beds b JOIN rooms rm ON rm.id = b.room_id WHERE TRUE ${hf}`).get(...h)).c
+	const tRooms = (await db.prepare(`SELECT COUNT(*) c FROM rooms rm WHERE TRUE ${hf}`).get(...h)).c
 
-	const byHotel = await Promise.all(
-		(await db.prepare("SELECT id, name FROM hotels ORDER BY name").all())
-			.filter((h) => !req.query.hotel_id || String(h.id) === String(req.query.hotel_id))
-			.map(async (h) => {
-			const beds = (await db.prepare("SELECT COUNT(*) c FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.hotel_id = ?").get(h.id)).c
-			const occ = (await db
-				.prepare(
-					`SELECT COUNT(DISTINCT p.bed_id) c FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
-					 WHERE rm.hotel_id = ? AND p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ?`,
-				)
-				.get(h.id, today, today)).c
-			return { name: h.name, beds, occupied: occ, load: beds ? Math.round((occ / beds) * 100) : 0 }
-		}))
-
-	const stageRow = await db
+	// По дням одним запросом: занято мест, заезды, выезды
+	const daily = await db
 		.prepare(
-			`SELECT
-				SUM(CASE WHEN p.stage='expected' THEN 1 ELSE 0 END) expected,
-				SUM(CASE WHEN p.stage='checked_in' THEN 1 ELSE 0 END) checked_in,
-				SUM(CASE WHEN p.stage='checked_out' THEN 1 ELSE 0 END) checked_out,
-				SUM(CASE WHEN p.stage='cancelled' THEN 1 ELSE 0 END) cancelled
-			 FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id
-			 WHERE p.date_to >= ? ${hotelFilter}`,
+			`SELECT to_char(d, 'YYYY-MM-DD') AS date,
+				(SELECT COUNT(DISTINCT p.bed_id) ${joins} WHERE ${live} ${hf} AND p.date_from <= to_char(d, 'YYYY-MM-DD') AND p.date_to > to_char(d, 'YYYY-MM-DD')) AS occupied,
+				(SELECT COUNT(*) ${joins} WHERE ${live} ${hf} AND p.date_from = to_char(d, 'YYYY-MM-DD')) AS arrivals,
+				(SELECT COUNT(*) ${joins} WHERE ${live} ${hf} AND p.date_to = to_char(d, 'YYYY-MM-DD')) AS departures
+			 FROM generate_series(?::date, ?::date, interval '1 day') d ORDER BY d`,
 		)
-		.get(today, ...hArg)
-	const stages = { expected: stageRow.expected || 0, checked_in: stageRow.checked_in || 0, checked_out: stageRow.checked_out || 0, cancelled: stageRow.cancelled || 0 }
+		.all(...h, ...h, ...h, from, to)
+	for (const x of daily) x.load = tBeds ? Math.round((x.occupied / tBeds) * 100) : 0
 
-	const byCompany = await db
+	// Ночи проживания внутри периода: пересечение брони с [from, end)
+	const overlap = `GREATEST(0, LEAST(nochotel_ymd(p.date_to), ?::date) - GREATEST(nochotel_ymd(p.date_from), ?::date))`
+	const inPeriod = `${live} AND p.date_from < ? AND p.date_to > ?`
+	const people = await db
 		.prepare(
-			`SELECT COALESCE(NULLIF(r.company, ''), 'Без организации') company, COUNT(DISTINCT r.id) count
-			 FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id JOIN residents r ON r.id = p.resident_id
-			 WHERE p.stage <> 'cancelled' AND p.date_from <= ? AND p.date_to > ? ${hotelFilter}
-			 GROUP BY company ORDER BY count DESC LIMIT 8`,
+			`SELECT COUNT(DISTINCT p.resident_id) people, COUNT(*) stays,
+				AVG(nochotel_ymd(p.date_to) - nochotel_ymd(p.date_from)) avg_stay
+			 ${joins} WHERE ${inPeriod} ${hf}`,
 		)
-		.all(today, today, ...hArg)
+		.get(end, from, ...h)
 
-	const movesStmt = db.prepare(
-		`SELECT
-			(SELECT COUNT(*) FROM placements p JOIN beds b ON b.id=p.bed_id JOIN rooms rm ON rm.id=b.room_id WHERE p.stage<>'cancelled' AND p.date_from=? ${hotelFilter}) arrivals,
-			(SELECT COUNT(*) FROM placements p JOIN beds b ON b.id=p.bed_id JOIN rooms rm ON rm.id=b.room_id WHERE p.stage<>'cancelled' AND p.date_to=? ${hotelFilter}) departures`,
-	)
-	const movements = []
-	for (let i = 0; i < 14; i++) {
-		const day = addDays(today, i)
-		const m = await movesStmt.get(day, ...hArg, day, ...hArg)
-		movements.push({ date: day, arrivals: m.arrivals, departures: m.departures })
-	}
+	const byHotel = await db
+		.prepare(
+			`SELECT h.id, h.name,
+				(SELECT COUNT(*) FROM beds b2 JOIN rooms r2 ON r2.id = b2.room_id WHERE r2.hotel_id = h.id) beds,
+				COALESCE((SELECT SUM(${overlap}) ${joins} WHERE rm.hotel_id = h.id AND ${inPeriod}), 0) bed_nights
+			 FROM hotels h ${hId ? "WHERE h.id = ?" : ""} ORDER BY h.name`,
+		)
+		.all(end, from, end, from, ...h)
+	for (const x of byHotel) x.load = x.beds ? Math.round((x.bed_nights / (x.beds * days)) * 100) : 0
 
+	const group = (col, empty) =>
+		db
+			.prepare(
+				`SELECT COALESCE(NULLIF(r.${col}, ''), '${empty}') name, COUNT(DISTINCT r.id) people, COALESCE(SUM(${overlap}), 0) bed_nights
+				 ${joins} JOIN residents r ON r.id = p.resident_id
+				 WHERE ${inPeriod} ${hf} GROUP BY 1 ORDER BY bed_nights DESC LIMIT 8`,
+			)
+			.all(end, from, end, from, ...h)
+
+	const issues = await db
+		.prepare(
+			`SELECT COUNT(*) created, SUM(CASE WHEN ri.status = 'Починено' THEN 1 ELSE 0 END) fixed
+			 FROM room_issues ri JOIN rooms rm ON rm.id = ri.room_id
+			 WHERE substr(ri.created_at, 1, 10) >= ? AND substr(ri.created_at, 1, 10) <= ? ${hf}`,
+		)
+		.get(from, to, ...h)
+
+	const bedNights = daily.reduce((s, x) => s + x.occupied, 0)
+	const peak = daily.reduce((m, x) => (x.occupied > m.occupied ? x : m), daily[0])
 	res.json({
-		date: today,
-		totals: { rooms: tRooms, beds: tBeds, occupied: occToday, free: tBeds - occToday, load: tBeds ? Math.round((occToday / tBeds) * 100) : 0, bedNights },
-		occupancy,
+		today,
+		from,
+		to,
+		days,
+		totals: {
+			rooms: tRooms,
+			beds: tBeds,
+			bedNights,
+			avgLoad: tBeds ? Math.round((bedNights / (tBeds * days)) * 100) : 0,
+			peak,
+			arrivals: daily.reduce((s, x) => s + x.arrivals, 0),
+			departures: daily.reduce((s, x) => s + x.departures, 0),
+			people: people.people || 0,
+			avgStay: people.avg_stay ? Math.round(people.avg_stay) : 0,
+			issues: issues.created || 0,
+			issuesFixed: issues.fixed || 0,
+		},
+		daily,
 		byHotel,
-		stages,
-		byCompany,
-		movements,
+		byCompany: await group("company", "Без организации"),
+		byDepartment: await group("department", "Без подразделения"),
 	})
 })
 
@@ -1620,14 +1648,24 @@ api.delete("/blocks/:id", requireRepair, async (req, res) => {
 
 api.get("/residents", async (req, res) => {
 	const q = `%${req.query.q || ""}%`
+	const today = todayStr()
+	// Где человек живёт сегодня — чтобы в списке на сотни людей сразу видеть и фильтровать
 	res.json(
 		await db
 			.prepare(
-				`SELECT r.*, u.username AS account_username, u.must_change_password AS account_must_change
-				 FROM residents r LEFT JOIN users u ON u.resident_id = r.id AND u.role = 'viewer'
-				 WHERE r.full_name LIKE ? OR r.tab_number LIKE ? ORDER BY r.full_name`,
+				`SELECT r.*, u.username AS account_username, u.must_change_password AS account_must_change,
+					cur.hotel_id AS stay_hotel_id, cur.place AS stay_place, cur.date_to AS stay_to
+				 FROM residents r
+				 LEFT JOIN users u ON u.resident_id = r.id AND u.role = 'viewer'
+				 LEFT JOIN LATERAL (
+					SELECT rm.hotel_id, h.name || ' · № ' || rm.number AS place, p.date_to
+					FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id JOIN hotels h ON h.id = rm.hotel_id
+					WHERE p.resident_id = r.id AND p.stage IN ('expected', 'checked_in') AND p.date_from <= ? AND p.date_to > ?
+					ORDER BY p.date_from DESC LIMIT 1
+				 ) cur ON TRUE
+				 WHERE r.full_name ILIKE ? OR r.tab_number ILIKE ? ORDER BY r.full_name`,
 			)
-			.all(q, q),
+			.all(today, today, q, q),
 	)
 })
 api.get("/residents/:id/card", async (req, res) => {
@@ -1924,13 +1962,17 @@ api.get("/report/resident/:id", async (req, res) => {
 	])
 })
 
+// Импорт кадровой выгрузки. Два шага: ?dry=1 — только разбор и план (что добавится,
+// что обновится, что пропущено), без записи; без dry — то же самое, но с записью.
+// Оператор видит план до того, как в базе что-то поменялось.
 api.post("/import/residents", requireRole("editor"), upload.single("file"), async (req, res) => {
 	if (!req.file) return res.status(400).json({ error: "Файл не получен" })
+	const dry = req.query.dry === "1"
 	const wb = new ExcelJS.Workbook()
 	try {
 		await wb.xlsx.load(req.file.buffer)
 	} catch {
-		return res.status(400).json({ error: "Не удалось прочитать файл Excel" })
+		return res.status(400).json({ error: "Не удалось прочитать файл. Нужен Excel в формате .xlsx" })
 	}
 	const ws = wb.worksheets[0]
 	if (!ws) return res.status(400).json({ error: "В файле нет листов" })
@@ -1955,84 +1997,152 @@ api.post("/import/residents", requireRole("editor"), upload.single("file"), asyn
 	ws.eachRow((row, n) => {
 		if (n > 1) {
 			const values = readRow(row)
-			if (values.some(Boolean)) rows.push(values)
+			if (values.some(Boolean)) rows.push({ line: n, values })
 		}
 	})
 	if (!rows.length) return res.status(400).json({ error: "В файле нет строк с данными" })
 
-	const cols = detectColumns(headers, rows)
+	const cols = detectColumns(headers, rows.map((r) => r.values))
 	if (cols.name < 0) {
 		return res.status(400).json({
-			error: "Не удалось определить колонку с ФИО. Нужен лист, где в одной из колонок записаны фамилия, имя и отчество.",
+			error: "Не удалось найти колонку с ФИО. Нужен лист, где в одной из колонок записаны фамилия, имя и отчество.",
 		})
 	}
 	const at = (row, idx) => (idx >= 0 ? String(row[idx] ?? "").trim() : "")
+	const FIELDS = ["company", "department", "position", "phone", "note"]
+	const LABEL = { company: "Организация", department: "Подразделение", position: "Должность", phone: "Телефон", note: "Примечание" }
+	const nameKey = (s) => s.trim().toLowerCase().replace(/ё/g, "е")
 
-	let inserted = 0
-	let updated = 0
-	let skipped = 0
+	// Кого уже знаем: по табельному, а без него — по ФИО (если такое ФИО одно),
+	// иначе повторная выгрузка без табельных плодила бы дубли.
+	const known = await db.prepare("SELECT id, full_name, tab_number, company, department, position, phone, note FROM residents").all()
+	const byTab = new Map(known.filter((r) => r.tab_number).map((r) => [String(r.tab_number).trim(), r]))
+	const byName = new Map()
+	for (const r of known) byName.set(nameKey(r.full_name), byName.has(nameKey(r.full_name)) ? null : r) // null — тёзки
 
-	await db.tx(async (t) => {
-		const findByTab = t.prepare("SELECT id FROM residents WHERE tab_number = ?")
-		const ins = t.prepare(
-			"INSERT INTO residents (full_name, tab_number, company, department, position, phone, note) VALUES (?,?,?,?,?,?,?)",
-		)
-		// Повторная выгрузка не должна плодить дубли: если табельный уже есть — обновляем
-		// карточку. COALESCE оставляет прежнее значение там, где в файле пусто, иначе
-		// сокращённая выгрузка затирала бы телефоны и заметки, введённые вручную.
-		const upd = t.prepare(
-			`UPDATE residents SET
-				full_name  = ?,
-				company    = COALESCE(?, company),
-				department = COALESCE(?, department),
-				position   = COALESCE(?, position),
-				phone      = COALESCE(?, phone),
-				note       = COALESCE(?, note)
-			 WHERE id = ?`,
-		)
-
-		for (const row of rows) {
-			const rawName = at(row, cols.name)
-			// Строки без ФИО — это подписи, итоги и пустые разделители. Молча пропускаем,
-			// но считаем, чтобы оператор видел расхождение с числом строк в файле.
-			if (!isFio(rawName)) {
-				if (rawName) skipped++
-				continue
-			}
-			const name = titleCase(rawName)
-			const tab = at(row, cols.tab) || null
-			const company = at(row, cols.company) || null
-			const department = at(row, cols.department) || null
-			const position = at(row, cols.position) || null
-			const phone = at(row, cols.phone) || null
-			const note = at(row, cols.note) || null
-
-			const existing = tab ? await findByTab.get(tab) : null
-			if (existing) {
-				await upd.run(name, company, department, position, phone, note, existing.id)
-				updated++
-			} else {
-				await ins.run(name, tab, company, department, position, phone, note)
-				inserted++
-			}
+	const plan = []
+	const seenTabs = new Set()
+	for (const { line, values } of rows) {
+		const rawName = at(values, cols.name)
+		// Строки без ФИО — подписи, итоги и пустые разделители.
+		if (!isFio(rawName)) {
+			if (rawName) plan.push({ action: "skip", line, name: rawName, reason: "не похоже на ФИО" })
+			continue
 		}
-	})
+		const rec = { full_name: titleCase(rawName), tab_number: at(values, cols.tab) || null }
+		for (const f of FIELDS) rec[f] = at(values, cols[f]) || null
+		if (rec.tab_number && seenTabs.has(rec.tab_number)) {
+			plan.push({ action: "skip", line, name: rec.full_name, reason: `табельный ${rec.tab_number} уже был выше в файле` })
+			continue
+		}
+		if (rec.tab_number) seenTabs.add(rec.tab_number)
 
-	// Возвращаем и разметку колонок: оператор сразу видит, что система приняла за ФИО
-	// и за табельный, и заметит, если файл разобран не так.
+		const match = (rec.tab_number && byTab.get(rec.tab_number)) || byName.get(nameKey(rec.full_name)) || null
+		if (!match) {
+			plan.push({ action: "new", line, name: rec.full_name, rec })
+			continue
+		}
+		// Пустое поле в файле не затирает введённое вручную (телефоны, заметки)
+		const changes = []
+		if (match.full_name !== rec.full_name) changes.push({ field: "ФИО", from: match.full_name, to: rec.full_name })
+		if (!match.tab_number && rec.tab_number) changes.push({ field: "Таб. №", from: null, to: rec.tab_number })
+		for (const f of FIELDS) if (rec[f] && rec[f] !== match[f]) changes.push({ field: LABEL[f], from: match[f], to: rec[f] })
+		plan.push({ action: changes.length ? "update" : "same", line, name: rec.full_name, id: match.id, rec, changes })
+	}
+
+	if (!dry) {
+		await db.tx(async (t) => {
+			const ins = t.prepare("INSERT INTO residents (full_name, tab_number, company, department, position, phone, note) VALUES (?,?,?,?,?,?,?)")
+			const upd = t.prepare(
+				`UPDATE residents SET full_name = ?, tab_number = COALESCE(tab_number, ?),
+					company = COALESCE(?, company), department = COALESCE(?, department), position = COALESCE(?, position),
+					phone = COALESCE(?, phone), note = COALESCE(?, note)
+				 WHERE id = ?`,
+			)
+			for (const p of plan) {
+				const r = p.rec
+				if (p.action === "new") await ins.run(r.full_name, r.tab_number, r.company, r.department, r.position, r.phone, r.note)
+				if (p.action === "update") await upd.run(r.full_name, r.tab_number, r.company, r.department, r.position, r.phone, r.note, p.id)
+			}
+		})
+	}
+
 	const label = (idx) => (idx >= 0 ? headers[idx] || `колонка ${idx + 1}` : null)
+	const count = (a) => plan.filter((p) => p.action === a).length
 	res.json({
-		imported: inserted,
-		updated,
-		skipped,
+		dry,
+		rows: rows.length,
+		imported: count("new"),
+		updated: count("update"),
+		same: count("same"),
+		skipped: count("skip"),
 		columns: {
 			"ФИО": label(cols.name),
 			"Таб. №": label(cols.tab),
 			"Организация": label(cols.company),
 			"Подразделение": label(cols.department),
 			"Должность": label(cols.position),
+			"Телефон": label(cols.phone),
 		},
+		plan: plan.map(({ rec, ...p }) => ({ ...p, tab: rec?.tab_number || null, department: rec?.department || null, position: rec?.position || null })),
 	})
+})
+
+// Выгрузка проживающих в том же виде, в каком их принимает импорт: файл можно
+// поправить в Excel и загрузить обратно — сопоставление пойдёт по табельному.
+api.get("/export/residents", async (req, res) => {
+	const today = todayStr()
+	const list = await db
+		.prepare(
+			`SELECT r.*, u.username AS account,
+				(SELECT h.name || ' · № ' || rm.number || ' · ' || b.label || '|' || p.date_from || '|' || p.date_to
+				 FROM placements p JOIN beds b ON b.id = p.bed_id JOIN rooms rm ON rm.id = b.room_id JOIN hotels h ON h.id = rm.hotel_id
+				 WHERE p.resident_id = r.id AND p.stage IN ('expected', 'checked_in') AND p.date_from <= ? AND p.date_to > ?
+				 ORDER BY p.date_from DESC LIMIT 1) AS stay
+			 FROM residents r LEFT JOIN users u ON u.resident_id = r.id AND u.role = 'viewer'
+			 ORDER BY r.full_name`,
+		)
+		.all(today, today)
+
+	const wb = new ExcelJS.Workbook()
+	const ws = wb.addWorksheet("Проживающие", { views: [{ state: "frozen", ySplit: 1 }] })
+	ws.columns = [
+		{ header: "Таб.№", key: "tab", width: 12 },
+		{ header: "ФИО", key: "name", width: 34 },
+		{ header: "Должность", key: "position", width: 34 },
+		{ header: "Подразделение", key: "department", width: 38 },
+		{ header: "Организация", key: "company", width: 18 },
+		{ header: "Телефон", key: "phone", width: 18 },
+		{ header: "Доступ в кабинет", key: "account", width: 18 },
+		{ header: "Проживает сейчас", key: "place", width: 36 },
+		{ header: "Заезд", key: "from", width: 12 },
+		{ header: "Выезд", key: "to", width: 12 },
+		{ header: "Примечание", key: "note", width: 30 },
+	]
+	const ru = (d) => (d ? d.split("-").reverse().join(".") : "")
+	for (const r of list) {
+		const [place, f, t] = (r.stay || "").split("|")
+		ws.addRow({
+			tab: r.tab_number || "",
+			name: r.full_name,
+			position: r.position || "",
+			department: r.department || "",
+			company: r.company || "",
+			phone: r.phone || "",
+			account: r.account || "",
+			place: place || "",
+			from: ru(f),
+			to: ru(t),
+			note: r.note || "",
+		})
+	}
+	const head = ws.getRow(1)
+	head.font = { bold: true, color: { argb: "FFFFFFFF" } }
+	head.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF6D3FC0" } }
+	head.alignment = { vertical: "middle" }
+	head.height = 22
+	ws.autoFilter = { from: "A1", to: "K1" }
+	await sendWorkbook(res, wb, `Проживающие_${ru(today)}`)
 })
 
 api.get("/rooms/:id/issues", async (req, res) => {
@@ -2068,6 +2178,16 @@ api.put("/issues/:id/status", requireRepair, async (req, res) => {
 	broadcast("issues:changed", { issueId: Number(req.params.id) }, (user) => STAFF_ROLES.has(user.role) || user.id === issue?.user_id)
 	res.json({ ok: true })
 });
+
+// Имя файла по-русски: в заголовке допустим только ASCII, поэтому кириллицу
+// передаём через filename* (RFC 5987), а в filename — транслитерацию-заглушку.
+async function sendWorkbook(res, wb, name) {
+	const buf = await wb.xlsx.writeBuffer()
+	const ascii = name.replace(/[^ -~]/g, "_")
+	res.setHeader("Content-Disposition", `attachment; filename="${ascii}.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}.xlsx`)
+	res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	res.send(Buffer.from(buf))
+}
 
 async function sendXlsx(res, data, name, header) {
 	const wb = new ExcelJS.Workbook()
@@ -2131,8 +2251,9 @@ const ready = db.ready
 	.then(() => {
 		server.listen(PORT, () => {
 			const addr = server.address()
-			console.log(`NochOtel запущен: http://localhost:${typeof addr === "object" && addr ? addr.port : PORT}`)
+			console.log(`Хиагда запущена: http://localhost:${typeof addr === "object" && addr ? addr.port : PORT}`)
 		})
+		if (require.main === module) backups.schedule()
 	})
 	.catch((e) => {
 		console.error("Не удалось подготовить базу PostgreSQL:", e.message)

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Резервное копирование NochOtel: дамп базы PostgreSQL + загруженные файлы.
+// Резервное копирование «Хиагды»: дамп базы PostgreSQL + загруженные файлы.
 //
 //   npm run backup                  — снять копию в ./backups
 //   BACKUP_DIR=/srv/backup npm run backup
@@ -85,7 +85,7 @@ const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(2)} МБ`
 
 function stamp(d = new Date()) {
 	const p = (n) => String(n).padStart(2, "0")
-	return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`
+	return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
 }
 
 // ── Файлы приложения ──────────────────────────────────────────────────────────
@@ -108,7 +108,9 @@ function archiveData(target) {
 function prune() {
 	const all = fs
 		.readdirSync(BACKUP_ROOT, { withFileTypes: true })
-		.filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}_\d{4}$/.test(e.name))
+		// Закреплённые (.keep) не удаляем и в лимит не считаем
+		.filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}_\d{4}(\d{2})?$/.test(e.name))
+		.filter((e) => !fs.existsSync(path.join(BACKUP_ROOT, e.name, ".keep")))
 		.map((e) => e.name)
 		.sort()
 	const extra = all.slice(0, Math.max(0, all.length - KEEP))
@@ -124,7 +126,7 @@ function main() {
 	const name = stamp()
 	const dir = path.join(BACKUP_ROOT, name)
 
-	console.log(`Резервное копирование NochOtel`)
+	console.log(`Резервное копирование`)
 	console.log(`  база:    ${conn.label}`)
 	console.log(`  каталог: ${dir}`)
 
@@ -149,6 +151,7 @@ function main() {
 
 	const manifest = {
 		created_at: new Date().toISOString(),
+		note: process.env.BACKUP_NOTE || null,
 		database: conn.label,
 		tool: (run(tool("pg_dump"), ["--version"]) || "").trim(),
 		node: process.version,
