@@ -6,13 +6,24 @@ import { useAuthStore } from "@/stores/auth"
 import { amenityIcon } from "@/icons"
 import Icon from "@/components/Icon.vue"
 import MapView from "@/components/MapView.vue"
+import GeoSearch from "@/components/GeoSearch.vue"
 import Stars from "@/components/Stars.vue"
 import {
 	PageHeader, Tabs, Card, Drawer, Field, Input, Textarea, Select, Button, IconButton,
-	Chip, Avatar, EmptyState, confirm,
+	Chip, Avatar, EmptyState, DataTable, MeterBar, confirm,
 } from "@/ui"
+import { useRouter } from "vue-router"
 
 const auth = useAuthStore()
+const router = useRouter()
+const ROOM_COLUMNS = [
+	{ key: "number", label: "Номер", sortable: true },
+	{ key: "hotel_name", label: "Гостиница", sortable: true },
+	{ key: "floor", label: "Этаж", sortable: true },
+	{ key: "class_name", label: "Тип", sortable: true },
+	{ key: "capacity", label: "Мест", sortable: true },
+	{ key: "amenity_ids", label: "Удобства" },
+]
 const canEdit = auth.can("editor")
 const canAdmin = auth.can("admin")
 
@@ -137,8 +148,38 @@ const placePickMarkers = computed(() => {
 })
 function pickHotel(e) {
 	if (!hotelModal.value) return
-	hotelModal.value.latitude = e.lat.toFixed(6)
-	hotelModal.value.longitude = e.lng.toFixed(6)
+	hotelModal.value.latitude = Number(e.lat).toFixed(6)
+	hotelModal.value.longitude = Number(e.lng).toFixed(6)
+}
+// Поиск по адресу → точка и приближение
+const hotelMap = ref(null)
+const geo = ref(null)
+function onGeo(p) {
+	pickHotel(p)
+	hotelMap.value?.flyTo(p.lat, p.lng, 16)
+}
+// «Я здесь» — комендант стоит у дома с телефоном
+function onLocated(p) {
+	if (p.error) return toast.error(p.error)
+	pickHotel(p)
+	toast.success(`Точка поставлена по геолокации (точность ~${Math.round(p.accuracy)} м)`)
+}
+// Адрес по точке — заполняем пустые поля, заполненные не трогаем
+const fillingAddr = ref(false)
+async function addressFromPoint() {
+	const m = hotelModal.value
+	if (!m?.latitude) return
+	fillingAddr.value = true
+	try {
+		const a = await geo.value.reverse(m.latitude, m.longitude)
+		if (!m.settlement && a.settlement) m.settlement = a.settlement
+		if (!m.address && a.address) m.address = a.address
+		toast.success(a.label ? "Адрес: " + a.label.split(",").slice(0, 3).join(",") : "Адрес по точке не найден")
+	} catch {
+		toast.error("Не удалось получить адрес — нет связи с геокодером")
+	} finally {
+		fillingAddr.value = false
+	}
 }
 function pickPlace(e) {
 	if (!hotelModal.value) return
@@ -293,40 +334,46 @@ onMounted(async () => {
 		<Tabs v-model="view" :options="viewOptions" />
 
 		<!-- Гостиницы -->
-		<div v-if="view === 'hotels'" class="hotels-grid">
-			<article v-for="h in hotels" :key="h.id" class="hcard" @click="canEdit && editHotel(h)">
-				<div class="hcard-head">
+		<div v-if="view === 'hotels'" class="hlist">
+			<article v-for="(h, i) in hotels" :key="h.id" class="hrow k-rise k-lift" :style="{ '--i': i }" @click="canEdit && editHotel(h)">
+				<div class="hrow__main">
 					<Avatar :name="h.name" size="2.6rem" />
 					<div class="grow">
 						<div class="hname">{{ h.name }}</div>
 						<div class="muted hsub">{{ [h.settlement, h.address].filter(Boolean).join(" · ") || "Адрес не указан" }}</div>
+						<div class="hfacts muted">
+							<span v-if="h.phone"><Icon name="phone" size="0.85rem" /> {{ h.phone }}</span>
+							<span v-if="h.check_out"><Icon name="clock" size="0.85rem" /> выезд {{ h.check_out }}</span>
+						</div>
 					</div>
-					<IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click.stop="removeHotel(h)" />
 				</div>
-
 				<template v-if="statsFor(h.id)">
-					<div class="hbar" :title="`Занято ${statsFor(h.id).occupancy}%`">
-						<span :style="{ width: statsFor(h.id).occupancy + '%' }" />
+					<div class="hrow__load">
+						<div class="spread"><span class="muted">Загрузка</span><b>{{ statsFor(h.id).occupancy }}%</b></div>
+						<MeterBar :value="statsFor(h.id).occupancy" />
 					</div>
-					<div class="hstats">
-						<span><b>{{ statsFor(h.id).rooms }}</b> номеров</span>
-						<span><b>{{ statsFor(h.id).free }}</b> свободно</span>
-						<span><b>{{ statsFor(h.id).beds }}</b> мест</span>
-						<span class="occ">{{ statsFor(h.id).occupancy }}% занято</span>
+					<div class="hrow__nums">
+						<div><b>{{ statsFor(h.id).free }}</b><span>свободно</span></div>
+						<div><b>{{ statsFor(h.id).beds }}</b><span>мест</span></div>
+						<div><b>{{ statsFor(h.id).rooms }}</b><span>номеров</span></div>
 					</div>
-					<div v-if="statsFor(h.id).repair || statsFor(h.id).issues" class="hflags">
+					<div class="hrow__flags">
 						<Chip v-if="statsFor(h.id).repair" color="var(--color-orange)" dot>ремонт: {{ statsFor(h.id).repair }}</Chip>
 						<Chip v-if="statsFor(h.id).issues" color="var(--color-red)" dot>заявок: {{ statsFor(h.id).issues }}</Chip>
 					</div>
 				</template>
-
-				<div class="hfoot muted">
-					<span v-if="h.phone"><Icon name="phone" size="0.85rem" /> {{ h.phone }}</span>
-					<span v-if="h.check_out"><Icon name="clock" size="0.85rem" /> выезд {{ h.check_out }}</span>
-					<span v-if="canEdit" class="edit-hint"><Icon name="pencil" size="0.85rem" /> изменить</span>
+				<div class="hrow__acts" @click.stop>
+					<Button size="sm" icon="calendar" @click="router.push({ path: '/app/rack', query: { hotel_id: h.id } })">Календарь</Button>
+					<Button size="sm" icon="layout" @click="router.push('/app/plan')">План</Button>
+					<IconButton v-if="canEdit" icon="pencil" label="Изменить" size="sm" @click="editHotel(h)" />
+					<IconButton v-if="canAdmin" icon="trash" label="Удалить" size="sm" variant="danger" @click="removeHotel(h)" />
 				</div>
 			</article>
-			<EmptyState v-if="!loading && !hotels.length" icon="building" title="Гостиниц нет" />
+			<Card v-if="!loading && !hotels.length">
+				<EmptyState icon="building" title="Гостиниц пока нет" text="Добавьте первую — затем номера и места в ней.">
+					<Button v-if="canEdit" variant="primary" icon="plus" @click="newHotel">Гостиница</Button>
+				</EmptyState>
+			</Card>
 		</div>
 
 		<!-- Номера -->
@@ -344,32 +391,40 @@ onMounted(async () => {
 				<span class="muted rcount">{{ visibleRooms.length }} из {{ rooms.length }}</span>
 			</Card>
 
-			<EmptyState v-if="!loading && !visibleRooms.length" icon="bed" title="Номеров не найдено" text="Измените фильтры или добавьте номер." />
-			<div v-else class="rooms-grid">
-				<article v-for="r in visibleRooms" :key="r.id" class="rcard" @click="canEdit && editRoom(r)">
-					<div class="rcard-head">
-						<span class="rnum">№ {{ r.number }}</span>
-						<Chip v-if="r.class_name">{{ r.class_name }}</Chip>
-						<span class="grow" />
-						<span class="rcap"><Icon name="bed" size="0.9rem" /> {{ r.capacity }}</span>
+			<DataTable
+				:columns="ROOM_COLUMNS"
+				:rows="visibleRooms"
+				:loading="loading"
+				:page-size="50"
+				empty-icon="bed"
+				empty-title="Номеров не найдено"
+				empty-text="Измените фильтры или добавьте номер"
+				@row-click="(r) => canEdit && editRoom(r)"
+			>
+				<template #cell-number="{ row }">
+					<div class="cell2">
+						<b class="contrast">№ {{ row.number }}</b>
+						<span v-if="row.description" class="muted rdesc">{{ row.description }}</span>
 					</div>
-					<div class="muted rmeta">
-						{{ r.hotel_name }}<template v-if="r.floor != null"> · этаж {{ r.floor }}</template>
-					</div>
-					<p v-if="r.description" class="rdesc">{{ r.description }}</p>
-					<div v-if="r.amenity_ids?.length" class="ramen">
-						<span v-for="id in r.amenity_ids.slice(0, 6)" :key="id" class="ra" :title="amenityById.get(id)?.name">
+				</template>
+				<template #cell-floor="{ value }">{{ value ?? "—" }}</template>
+				<template #cell-class_name="{ value }"><Chip v-if="value">{{ value }}</Chip><span v-else class="muted">—</span></template>
+				<template #cell-capacity="{ value }"><span class="nowrap"><Icon name="bed" size="0.9rem" /> {{ value }}</span></template>
+				<template #cell-amenity_ids="{ row }">
+					<div class="ramen">
+						<span v-for="id in (row.amenity_ids || []).slice(0, 6)" :key="id" class="ra" :title="amenityById.get(id)?.name">
 							<Icon :name="amenityIcon(amenityById.get(id)?.icon)" size="0.9rem" />
 						</span>
-						<span v-if="r.amenity_ids.length > 6" class="ra more">+{{ r.amenity_ids.length - 6 }}</span>
+						<span v-if="(row.amenity_ids || []).length > 6" class="ra more">+{{ row.amenity_ids.length - 6 }}</span>
+						<span v-if="!(row.amenity_ids || []).length" class="muted">—</span>
 					</div>
-					<div class="rcard-foot">
-						<IconButton icon="download" label="Отчёт в Excel" size="sm" @click.stop="roomReport(r)" />
-						<IconButton v-if="canEdit" icon="pencil" label="Изменить" size="sm" @click.stop="editRoom(r)" />
-						<IconButton v-if="canEdit" icon="trash" label="Удалить" size="sm" variant="danger" @click.stop="removeRoom(r)" />
-					</div>
-				</article>
-			</div>
+				</template>
+				<template #actions="{ row }">
+					<IconButton icon="download" label="Отчёт в Excel" size="sm" @click="roomReport(row)" />
+					<IconButton v-if="canEdit" icon="pencil" label="Изменить" size="sm" @click="editRoom(row)" />
+					<IconButton v-if="canEdit" icon="trash" label="Удалить" size="sm" variant="danger" @click="removeRoom(row)" />
+				</template>
+			</DataTable>
 		</template>
 
 		<!-- Drawer гостиницы -->
@@ -380,9 +435,26 @@ onMounted(async () => {
 				<div class="two"><Field label="Название"><Input v-model="hotelModal.name" /></Field><Field label="Посёлок"><Input v-model="hotelModal.settlement" /></Field></div>
 				<div class="two"><Field label="Адрес"><Input v-model="hotelModal.address" /></Field><Field label="Телефон коменданта"><Input v-model="hotelModal.phone" /></Field></div>
 				<div class="two"><Field label="E-mail"><Input v-model="hotelModal.email" /></Field><Field label="Заезд / выезд"><div class="row"><Input v-model="hotelModal.check_in" placeholder="14:00" /><Input v-model="hotelModal.check_out" placeholder="12:00" /></div></Field></div>
-				<div class="two"><Field label="Широта"><Input v-model="hotelModal.latitude" placeholder="51.97" /></Field><Field label="Долгота"><Input v-model="hotelModal.longitude" placeholder="116.54" /></Field></div>
-				<Field label="Точка на карте (клик)">
-					<MapView :markers="hotelPickMarkers" :center="hotelModal.latitude && hotelModal.longitude ? [Number(hotelModal.latitude), Number(hotelModal.longitude)] : [54.4, 113.0]" :zoom="hotelModal.latitude ? 13 : 4" :fit="false" click-to-pick height="220px" @pick="pickHotel" />
+				<Field label="Где дом на карте" hint="Найдите по адресу, нажмите «Где я» у самого дома или просто кликните по карте">
+					<div class="geo-box">
+						<GeoSearch ref="geo" @pick="onGeo" />
+						<MapView
+							ref="hotelMap"
+							:markers="hotelPickMarkers"
+							:center="hotelModal.latitude && hotelModal.longitude ? [Number(hotelModal.latitude), Number(hotelModal.longitude)] : [54.4, 113.0]"
+							:zoom="hotelModal.latitude ? 15 : 4"
+							:fit="false"
+							click-to-pick
+							height="280px"
+							@pick="pickHotel"
+							@located="onLocated"
+						/>
+						<div class="coords">
+							<Input v-model="hotelModal.latitude" placeholder="Широта" title="Широта" />
+							<Input v-model="hotelModal.longitude" placeholder="Долгота" title="Долгота" />
+							<Button size="sm" icon="map-pin" :disabled="!hotelModal.latitude" :loading="fillingAddr" @click="addressFromPoint">Адрес по точке</Button>
+						</div>
+					</div>
 				</Field>
 				<Field label="Описание"><Textarea v-model="hotelModal.description" :rows="2" /></Field>
 				<Field label="Правила"><Textarea v-model="hotelModal.rules" :rows="2" /></Field>
@@ -490,10 +562,101 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.hotels-grid {
+.geo-box {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+	gap: var(--gap-sm);
+}
+.coords {
+	display: grid;
+	grid-template-columns: 1fr 1fr auto;
+	gap: var(--gap-sm);
+	align-items: center;
+}
+.hlist {
+	display: grid;
+	gap: var(--gap-sm);
+}
+.hrow {
+	display: grid;
+	/* minmax(0, …): одинаковые колонки во всех строках, независимо от длины названия */
+	grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) 13rem minmax(0, 0.8fr) auto;
+	align-items: center;
+	gap: var(--gap-xl);
+	padding: var(--gap-md) var(--gap-lg);
+	background: var(--color-raised-bg);
+	border: 1px solid var(--color-divider);
+	border-radius: var(--radius-lg);
+	cursor: pointer;
+	transition: border-color var(--speed-fast);
+}
+.hrow:hover {
+	border-color: var(--color-brand);
+}
+.hrow__main {
+	display: flex;
+	align-items: center;
 	gap: var(--gap-md);
+	min-width: 0;
+}
+.hfacts {
+	display: flex;
+	gap: var(--gap-md);
+	flex-wrap: wrap;
+	margin-top: 4px;
+	font-size: var(--font-size-xs);
+}
+.hfacts span {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+.hrow__load {
+	display: grid;
+	gap: 6px;
+	font-size: var(--font-size-sm);
+}
+.hrow__load b {
+	color: var(--color-contrast);
+}
+.hrow__nums {
+	display: flex;
+	gap: var(--gap-lg);
+}
+.hrow__nums div {
+	display: grid;
+	text-align: center;
+}
+.hrow__nums b {
+	font-size: var(--font-size-lg);
+	color: var(--color-contrast);
+	line-height: 1.1;
+}
+.hrow__nums span {
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+}
+.hrow__flags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+.hrow__acts {
+	display: flex;
+	gap: 4px;
+	justify-content: flex-end;
+}
+.cell2 {
+	display: grid;
+	line-height: 1.3;
+}
+@media (max-width: 1100px) {
+	.hrow {
+		grid-template-columns: 1fr 1fr;
+		gap: var(--gap-md);
+	}
+	.hrow__main {
+		grid-column: 1 / -1;
+	}
 }
 /* Карточка дома: имя, загрузка, дежурные факты */
 .hcard {

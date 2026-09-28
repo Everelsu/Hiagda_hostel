@@ -311,6 +311,24 @@ const isToday = computed(() => day.value === today())
 .mrow:hover {
 	border-color: color-mix(in srgb, var(--color-brand), transparent 55%);
 }
+/* Колонки строго по сетке: раньше ширина чипа стадии сдвигала «где» и «когда» */
+.hrow {
+	display: grid;
+	grid-template-columns: 10px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) 7.5rem auto;
+}
+.hrow .k-chip,
+.hrow :deep(.k-chip) {
+	justify-self: end;
+}
+@media (max-width: 800px) {
+	.hrow {
+		grid-template-columns: 10px 1fr auto;
+	}
+	.hrow .where,
+	.hrow .when {
+		grid-column: 2 / -1;
+	}
+}
 .hrow.checked_in {
 	border-left-color: var(--color-green);
 }

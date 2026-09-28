@@ -79,7 +79,7 @@ function toPlaceholders(sql) {
 }
 
 // Таблицы-связки без собственного id — им RETURNING id не приписываем.
-const ID_LESS_TABLES = new Set(["room_amenities", "hotel_amenities"])
+const ID_LESS_TABLES = new Set(["room_amenities", "hotel_amenities", "floor_images"])
 
 // В better-sqlite3 .run() возвращал lastInsertRowid. В PostgreSQL эквивалента нет,
 // поэтому к INSERT'ам дописываем RETURNING id и достаём его из результата.
@@ -394,6 +394,14 @@ ALTER TABLE residents ADD COLUMN IF NOT EXISTS department TEXT;
 -- Статус (цвет ленты) привязывается к стадии брони: сменили стадию — сменился цвет.
 -- Раньше это были два независимых поля, и «Заселить» оставляло ленту цвета «Забронировано».
 ALTER TABLE statuses ADD COLUMN IF NOT EXISTS stage TEXT;
+-- Фото этажа: план эвакуации или снимок схемы. Сама картинка — в data/uploads (попадает в бэкап
+-- вместе с остальными файлами), здесь только ссылка.
+CREATE TABLE IF NOT EXISTS floor_images (
+	hotel_id INTEGER NOT NULL REFERENCES hotels(id) ON DELETE CASCADE,
+	floor    INTEGER NOT NULL,
+	url      TEXT NOT NULL,
+	PRIMARY KEY (hotel_id, floor)
+);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_statuses_stage ON statuses(stage) WHERE stage IS NOT NULL;
 UPDATE statuses SET stage = 'expected'
  WHERE id = (SELECT MIN(id) FROM statuses WHERE kind = 'booking' AND stage IS NULL AND name ILIKE '%брон%')

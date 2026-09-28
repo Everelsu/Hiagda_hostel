@@ -20,6 +20,9 @@ const props = defineProps({
 	editable: { type: Boolean, default: false },
 	carving: { type: Boolean, default: false },
 	selectedId: { type: [String, Number], default: null },
+	// Подложка — фото плана этажа, по которому удобно обвести номера
+	background: { type: String, default: "" },
+	backgroundOpacity: { type: Number, default: 0.35 },
 })
 const emit = defineEmits(["select", "move", "open", "carve"])
 
@@ -192,6 +195,7 @@ function onClick(item) {
 				</pattern>
 			</defs>
 			<rect :width="width" :height="height" fill="var(--plan-bg)" />
+			<image v-if="background" :href="background" x="0" y="0" :width="width" :height="height" preserveAspectRatio="xMidYMid meet" :opacity="backgroundOpacity" style="pointer-events: none" />
 			<rect v-if="editable" :width="width" :height="height" fill="url(#plan-grid)" />
 
 			<!-- Служебные помещения -->

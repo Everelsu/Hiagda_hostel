@@ -68,7 +68,7 @@ async function remove(a) {
 			<EmptyState icon="megaphone" title="Объявлений пока нет" text="Опубликуйте первое — его увидят вахтовики в своём кабинете." />
 		</Card>
 		<div v-else class="ann-grid">
-			<Card v-for="a in items" :key="a.id" pad="lg">
+			<Card v-for="(a, i) in items" :key="a.id" pad="lg" class="k-rise" :style="{ '--i': i }">
 				<template #title>
 					<h3 class="ann-title"><Icon v-if="a.pinned" name="pin" class="ann-pin" />{{ a.title }}</h3>
 					<div class="ann-meta">
@@ -126,7 +126,8 @@ async function remove(a) {
 }
 .ann-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+	/* auto-fit: карточки растягиваются на ширину, а не жмутся влево */
+	grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
 	gap: var(--gap-md);
 	align-items: start;
 }

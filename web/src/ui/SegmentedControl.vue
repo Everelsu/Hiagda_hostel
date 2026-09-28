@@ -1,10 +1,16 @@
 <script setup>
-const model = defineModel({ type: [String, Number], default: "" })
-defineProps({ options: { type: Array, default: () => [] } })
+import { ref } from "vue"
+import { useIndicator } from "./useIndicator"
+
+const model = defineModel({ type: [String, Number, Boolean], default: "" })
+const props = defineProps({ options: { type: Array, default: () => [] } })
+const root = ref(null)
+const thumb = useIndicator(root, () => [model.value, props.options.map((o) => o.label + o.count)])
 </script>
 
 <template>
-	<div class="k-seg" role="tablist">
+	<div ref="root" class="k-seg" role="tablist">
+		<span class="k-seg__thumb" :style="thumb" aria-hidden="true" />
 		<button
 			v-for="o in options"
 			:key="o.value"
@@ -54,8 +60,26 @@ defineProps({ options: { type: Array, default: () => [] } })
 	color: var(--color-contrast);
 }
 .k-seg__btn.on {
-	background: var(--color-brand-highlight);
 	color: var(--color-brand);
+}
+/* Подсветка выбранного — одна плашка, которая переезжает */
+.k-seg {
+	position: relative;
+}
+.k-seg__btn {
+	position: relative;
+	z-index: 1;
+	transition: color var(--speed);
+}
+.k-seg__thumb {
+	position: absolute;
+	left: 0;
+	top: 3px;
+	bottom: 3px;
+	border-radius: var(--radius-sm);
+	background: var(--color-brand-highlight);
+	transition: transform 260ms cubic-bezier(0.3, 0.7, 0.2, 1), width 260ms cubic-bezier(0.3, 0.7, 0.2, 1);
+	pointer-events: none;
 }
 .k-seg__count {
 	font-size: var(--font-size-xs);

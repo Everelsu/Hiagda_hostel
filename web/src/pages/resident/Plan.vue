@@ -3,7 +3,7 @@ import { ref, onMounted, computed } from "vue"
 import { api } from "@/api/client"
 import FloorPlan from "@/components/FloorPlan.vue"
 import Icon from "@/components/Icon.vue"
-import { PageHeader, Card, EmptyState } from "@/ui"
+import { PageHeader, Card, EmptyState, SegmentedControl } from "@/ui"
 
 const data = ref(null)
 const loading = ref(true)
@@ -27,6 +27,13 @@ const planRooms = computed(() =>
 )
 // Номер может быть ещё не размещён на схеме — честно предупреждаем, а не молчим
 const myRoomOnPlan = computed(() => planRooms.value.some((r) => r.highlight))
+// Схема и/или фото (план эвакуации): если есть только фото — показываем его
+const hasScheme = computed(() => !!(data.value?.rooms?.length || data.value?.shapes?.length))
+const showPhoto = ref(false)
+const VIEW = [
+	{ value: false, label: "Схема" },
+	{ value: true, label: "План эвакуации / фото" },
+]
 </script>
 
 <template>
@@ -47,6 +54,13 @@ const myRoomOnPlan = computed(() => planRooms.value.some((r) => r.highlight))
 				<span v-if="myRoomOnPlan" class="you"><span class="swatch" /> ваш номер № {{ data.my_room_number }}</span>
 			</div>
 
+			<SegmentedControl v-if="hasScheme && data.image" v-model="showPhoto" :options="VIEW" />
+
+			<a v-if="data.image && (showPhoto || !hasScheme)" :href="data.image" target="_blank" rel="noopener" class="photo">
+				<img :src="data.image" alt="План этажа" />
+				<span class="muted">Нажмите, чтобы открыть крупно</span>
+			</a>
+			<template v-else>
 			<div v-if="!myRoomOnPlan" class="notice">
 				<Icon name="info" />
 				<span>Ваш номер <b>№ {{ data.my_room_number }}</b> ещё не отмечен на схеме — комендант его не разместил. Ориентиры ниже показаны верно.</span>
@@ -55,6 +69,7 @@ const myRoomOnPlan = computed(() => planRooms.value.some((r) => r.highlight))
 			<FloorPlan :rooms="planRooms" :shapes="data.shapes" />
 
 			<p class="muted hint"><Icon name="info" size="0.9rem" /> Схема показывает, где ваш номер и что находится рядом — душевая, кухня, лестница, выход.</p>
+			</template>
 		</template>
 	</div>
 </template>
@@ -95,6 +110,18 @@ const myRoomOnPlan = computed(() => planRooms.value.some((r) => r.highlight))
 .notice :deep(svg) {
 	color: var(--color-orange);
 	flex-shrink: 0;
+}
+.photo {
+	display: grid;
+	gap: 6px;
+	justify-items: center;
+	font-size: var(--font-size-xs);
+}
+.photo img {
+	width: 100%;
+	border-radius: var(--radius-md);
+	background: #fff;
+	border: 1px solid var(--color-divider);
 }
 .hint {
 	display: flex;

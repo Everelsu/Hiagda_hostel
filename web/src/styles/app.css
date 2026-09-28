@@ -316,3 +316,68 @@ input[type="radio"] {
 	border-radius: var(--radius-md);
 	box-shadow: var(--shadow-floating);
 }
+
+/* Появление списков «волной»: --i — порядковый номер, задержка ограничена,
+   чтобы длинный список не выезжал секунду */
+@keyframes k-rise {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+}
+.k-rise {
+	animation: k-rise 340ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+	animation-delay: calc(min(var(--i, 0), 12) * 35ms);
+}
+/* Приподнимается при наведении — видно, что можно нажать */
+.k-lift {
+	transition: transform var(--speed-fast), border-color var(--speed-fast), box-shadow var(--speed-fast);
+}
+.k-lift:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.k-lift:active {
+	transform: translateY(0);
+}
+
+/* Печать страницы (план этажа и т.п.): без меню, шапки и кнопок, во всю ширину листа */
+@media print {
+	.sidebar,
+	.topbar,
+	.no-print,
+	.k-toasts {
+		display: none !important;
+	}
+	.shell,
+	.main,
+	.content {
+		display: block !important;
+		height: auto !important;
+		overflow: visible !important;
+		padding: 0 !important;
+	}
+	body {
+		background: #fff !important;
+	}
+}
+
+/* Смена темы: круг новой темы поверх старой, без стандартного перекрёстного затухания */
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation: none;
+	mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+	z-index: 1;
+}
+::view-transition-new(root) {
+	z-index: 2;
+}
+/* Запасной вариант без View Transitions — плавно перетекают цвета */
+html.theme-anim,
+html.theme-anim *,
+html.theme-anim *::before,
+html.theme-anim *::after {
+	transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, fill 0.4s ease, stroke 0.4s ease !important;
+}

@@ -1471,6 +1471,15 @@ const selStyle = computed(() => {
 	border-top-right-radius: 999px;
 	border-bottom-right-radius: 999px;
 }
+.ribbon:not(.ghost) {
+	animation: rib-in 260ms ease both;
+}
+@keyframes rib-in {
+	from {
+		opacity: 0;
+		transform: scaleX(0.96);
+	}
+}
 .ribbon:hover {
 	background: color-mix(in srgb, var(--rc) 38%, var(--color-raised-bg));
 }

@@ -22,8 +22,8 @@ const canAdmin = auth.can("admin")
 
 const view = ref("residents")
 const viewOptions = computed(() => [
-	{ value: "residents", label: "Вахтовики" },
-	...(canAdmin ? [{ value: "staff", label: "Персонал" }] : []),
+	{ value: "residents", label: "Вахтовики", icon: "users" },
+	...(canAdmin ? [{ value: "staff", label: "Персонал", icon: "user-cog" }] : []),
 ])
 
 /* ---------- Вахтовики ---------- */
@@ -297,7 +297,7 @@ const fmt = (d) => dateTime(d, { dateStyle: "medium" })
 			</template>
 		</PageHeader>
 
-		<SegmentedControl v-model="view" :options="viewOptions" />
+		<Tabs v-model="view" :options="viewOptions" />
 
 		<!-- Вахтовики -->
 		<template v-if="view === 'residents'">

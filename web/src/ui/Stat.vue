@@ -1,10 +1,11 @@
 <script setup>
+import CountUp from "./CountUp.vue"
 defineProps({ value: [String, Number], label: String, accent: Boolean })
 </script>
 
 <template>
 	<div class="k-stat" :class="{ 'k-stat--accent': accent }">
-		<div class="k-stat__value">{{ value }}</div>
+		<div class="k-stat__value"><CountUp :value="value" /></div>
 		<div class="k-stat__label">{{ label }}</div>
 	</div>
 </template>

@@ -164,6 +164,10 @@ api.post("/register-admin", async (req, res) => {
 	res.json({ token: sign(user), user: publicUser(user) })
 })
 
+// Настройки для браузера до входа. Ключ JS API Яндекса в любом случае виден в коде
+// страницы, поэтому отдаём его открыто (ограничение — по HTTP Referer в кабинете Яндекса).
+api.get("/public-config", (_req, res) => res.json({ yandexMapsKey: process.env.YANDEX_MAPS_KEY || null }))
+
 api.post("/login", async (req, res) => {
 	const { username, password } = req.body || {}
 	const user = await db.prepare("SELECT * FROM users WHERE username = ?").get(username)
@@ -497,6 +501,8 @@ api.get("/me/feed", async (req, res) => {
 		hotel,
 		announcements,
 		unread,
+		// когда последний раз смотрел — чтобы пометить новые объявления
+		seen_at: seen || null,
 		issues: await myIssues(req.user.id),
 	})
 })
@@ -520,8 +526,10 @@ api.get("/me/plan", async (req, res) => {
 	const shapes = await db
 		.prepare("SELECT id, kind, label, x, y, w, h, cells FROM plan_shapes WHERE hotel_id = ? AND floor = ? ORDER BY id")
 		.all(pl.hotel_id, floor)
+	const image = (await db.prepare("SELECT url FROM floor_images WHERE hotel_id = ? AND floor = ?").get(pl.hotel_id, floor))?.url || null
 	res.json({
-		available: rooms.length > 0 || shapes.length > 0,
+		available: rooms.length > 0 || shapes.length > 0 || !!image,
+		image,
 		floor,
 		hotel_name: pl.hotel_name,
 		my_room_id: pl.room_id,
@@ -1025,11 +1033,31 @@ api.get("/plan", async (req, res) => {
 			.prepare("SELECT id, floor, kind, label, x, y, w, h, cells FROM plan_shapes WHERE hotel_id = ? ORDER BY id")
 			.all(req.query.hotel_id)
 
-		res.json({ date, rooms, shapes })
+		const images = Object.fromEntries(
+			(await db.prepare("SELECT floor, url FROM floor_images WHERE hotel_id = ?").all(req.query.hotel_id)).map((i) => [i.floor, i.url]),
+		)
+		res.json({ date, rooms, shapes, images })
 	} catch (e) {
 		console.error("GET /plan:", e.message)
 		res.status(500).json({ error: "Не удалось загрузить план этажа" })
 	}
+})
+
+// Фото этажа (план эвакуации, снимок схемы). url: null — убрать.
+api.put("/plan/image", requireRole("editor"), async (req, res) => {
+	const hotelId = Number(req.body?.hotel_id)
+	const floor = Number(req.body?.floor)
+	const url = req.body?.url || null
+	if (!hotelId || !Number.isFinite(floor)) return res.status(400).json({ error: "Укажите гостиницу и этаж" })
+	if (url && !/^\/uploads\/[\w.-]+$/.test(url)) return res.status(400).json({ error: "Сначала загрузите изображение" })
+	if (url) {
+		await db
+			.prepare("INSERT INTO floor_images (hotel_id, floor, url) VALUES (?,?,?) ON CONFLICT (hotel_id, floor) DO UPDATE SET url = EXCLUDED.url")
+			.run(hotelId, floor, url)
+	} else {
+		await db.prepare("DELETE FROM floor_images WHERE hotel_id = ? AND floor = ?").run(hotelId, floor)
+	}
+	res.json({ ok: true })
 })
 
 // Сохранение геометрии плана этажа: позиции номеров + элементы (коридоры, лестницы…).

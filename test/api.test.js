@@ -611,3 +611,16 @@ test("статус следует за стадией: «Заселить» пе
 	await call("POST", `/placements/${q.json.id}/stage`, { token: adminToken, body: { stage: "checked_in" } })
 	assert.equal(await statusOf(q.json.id), special)
 })
+
+test("фото плана этажа: ставится, отдаётся в /plan и убирается", async () => {
+	const hotels = (await call("GET", "/hotels", { token: adminToken })).json
+	const h = hotels[0].id
+	const set = await call("PUT", "/plan/image", { token: adminToken, body: { hotel_id: h, floor: 3, url: "/uploads/plan-test.png" } })
+	assert.equal(set.status, 200)
+	// Повторная установка заменяет, а не дублирует
+	await call("PUT", "/plan/image", { token: adminToken, body: { hotel_id: h, floor: 3, url: "/uploads/plan-test2.png" } })
+	assert.equal((await call("GET", `/plan?hotel_id=${h}`, { token: adminToken })).json.images[3], "/uploads/plan-test2.png")
+	assert.equal((await call("PUT", "/plan/image", { token: adminToken, body: { hotel_id: h, floor: 3, url: "http://evil/x.png" } })).status, 400)
+	await call("PUT", "/plan/image", { token: adminToken, body: { hotel_id: h, floor: 3, url: null } })
+	assert.equal((await call("GET", `/plan?hotel_id=${h}`, { token: adminToken })).json.images[3], undefined)
+})

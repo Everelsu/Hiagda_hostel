@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted } from "vue"
+import IconButton from "@/ui/IconButton.vue"
 
 // persistent — не закрывать кликом мимо и Esc (например, окно с одноразовыми паролями)
 const props = defineProps({ title: String, wide: Boolean, persistent: Boolean })
@@ -16,7 +17,10 @@ onUnmounted(() => document.removeEventListener("keydown", onKey))
 <template>
 	<div class="overlay" @click.self="dismiss">
 		<div class="modal" :class="{ wide }">
-			<h3 class="modal-head">{{ title }}</h3>
+			<header class="modal-head">
+				<h3>{{ title }}</h3>
+				<IconButton icon="x" label="Закрыть" size="sm" @click="emit('close')" />
+			</header>
 			<div class="modal-body"><slot /></div>
 			<div v-if="$slots.foot" class="modal-foot"><slot name="foot" /></div>
 		</div>
@@ -50,7 +54,10 @@ onUnmounted(() => document.removeEventListener("keydown", onKey))
 	width: 100%;
 	max-width: 520px;
 	max-height: 88vh;
-	overflow: auto;
+	/* шапка и кнопки на месте, прокручивается только содержимое */
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
 	background: var(--color-raised-bg);
 	border: 1px solid var(--color-divider);
 	border-radius: var(--radius-lg);
@@ -61,16 +68,27 @@ onUnmounted(() => document.removeEventListener("keydown", onKey))
 	max-width: 720px;
 }
 .modal-head {
-	padding: var(--gap-lg) var(--gap-xl);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--gap-md);
+	padding: var(--gap-md) var(--gap-md) var(--gap-md) var(--gap-xl);
 	border-bottom: 1px solid var(--color-divider);
+	flex-shrink: 0;
+}
+.modal-head h3 {
+	font-size: var(--font-size-lg);
 }
 .modal-body {
 	padding: var(--gap-xl);
+	overflow-y: auto;
+	flex: 1;
 	display: grid;
 	gap: var(--gap-md);
 	grid-template-columns: minmax(0, 1fr);
 }
 .modal-foot {
+	flex-shrink: 0;
 	padding: var(--gap-lg) var(--gap-xl);
 	border-top: 1px solid var(--color-divider);
 	display: flex;

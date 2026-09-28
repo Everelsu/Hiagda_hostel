@@ -1,8 +1,10 @@
 <script setup>
-import { computed } from "vue"
+import { computed, ref, onMounted } from "vue"
 
 const props = defineProps({ value: { type: Number, default: 0 }, color: { type: String, default: "" } })
-const pct = computed(() => Math.max(0, Math.min(100, props.value)))
+const shown = ref(false)
+onMounted(() => requestAnimationFrame(() => (shown.value = true)))
+const pct = computed(() => (shown.value ? Math.max(0, Math.min(100, props.value)) : 0))
 const fill = computed(() => props.color || (pct.value >= 95 ? "var(--color-red)" : pct.value >= 70 ? "var(--color-orange)" : "var(--color-green)"))
 </script>
 
@@ -22,6 +24,6 @@ const fill = computed(() => props.color || (pct.value >= 95 ? "var(--color-red)"
 .k-meter__fill {
 	height: 100%;
 	border-radius: var(--radius-max);
-	transition: width var(--speed);
+	transition: width 700ms cubic-bezier(0.2, 0.7, 0.2, 1), background-color var(--speed);
 }
 </style>

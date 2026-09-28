@@ -1,9 +1,9 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from "vue"
+import { ref, computed, onMounted, onUnmounted, watch } from "vue"
 import { api } from "@/api/client"
 import { useAuthStore } from "@/stores/auth"
 import Icon from "@/components/Icon.vue"
-import { Card, Chip, Skeleton, EmptyState, Button, IconButton, MeterBar } from "@/ui"
+import { Card, Chip, Skeleton, EmptyState, Button, IconButton, MeterBar, CountUp } from "@/ui"
 
 const auth = useAuthStore()
 const d = ref(null)
@@ -44,7 +44,9 @@ const tension = computed(() => {
 // Кольцо загрузки
 const R = 52
 const C = 2 * Math.PI * R
-const ring = computed(() => `${((d.value?.totals.load || 0) / 100) * C} ${C}`)
+const ringReady = ref(false)
+const ring = computed(() => `${ringReady.value ? ((d.value?.totals.load || 0) / 100) * C : 0} ${C}`)
+watch(d, (v) => v && requestAnimationFrame(() => requestAnimationFrame(() => (ringReady.value = true))))
 
 // Прогноз: высота — занятость относительно всех мест, подпись — сколько свободно
 const beds = computed(() => Math.max(1, d.value?.totals.beds || 1))
@@ -103,7 +105,7 @@ const plural = (n, one, few, many) => {
 		<template v-else>
 			<div class="row3">
 				<!-- Загрузка -->
-				<Card pad="lg" class="occ">
+				<Card pad="lg" class="occ k-rise" style="--i: 0">
 					<svg viewBox="0 0 128 128" class="occ__ring" role="img" :aria-label="`Загрузка ${d.totals.load}%`">
 						<circle cx="64" cy="64" :r="R" class="occ__track" />
 						<circle cx="64" cy="64" :r="R" class="occ__val" :style="{ stroke: tension.color }" :stroke-dasharray="ring" transform="rotate(-90 64 64)" />
@@ -111,18 +113,18 @@ const plural = (n, one, few, many) => {
 						<text x="64" y="82" text-anchor="middle" class="occ__cap">загрузка</text>
 					</svg>
 					<div class="occ__text">
-						<div class="occ__big"><b>{{ d.totals.free }}</b> {{ plural(d.totals.free, "место свободно", "места свободно", "мест свободно") }}</div>
+						<div class="occ__big"><b><CountUp :value="d.totals.free" /></b> {{ plural(d.totals.free, "место свободно", "места свободно", "мест свободно") }}</div>
 						<div class="muted">занято {{ d.totals.occupied }} из {{ d.totals.beds }}</div>
 						<Chip :color="tension.color" dot style="margin-top: var(--gap-sm)">{{ tension.label }}</Chip>
 					</div>
 				</Card>
 
 				<!-- Сегодня -->
-				<Card pad="lg">
+				<Card pad="lg" class="k-rise" style="--i: 1">
 					<div class="card-h"><Icon name="calendar" /> Сегодня</div>
 					<div class="today__nums">
-						<div class="today__num in"><b>{{ d.totals.checkins }}</b><span>{{ plural(d.totals.checkins, "заезд", "заезда", "заездов") }}</span></div>
-						<div class="today__num out"><b>{{ d.totals.checkouts }}</b><span>{{ plural(d.totals.checkouts, "выезд", "выезда", "выездов") }}</span></div>
+						<div class="today__num in"><b><CountUp :value="d.totals.checkins" /></b><span>{{ plural(d.totals.checkins, "заезд", "заезда", "заездов") }}</span></div>
+						<div class="today__num out"><b><CountUp :value="d.totals.checkouts" /></b><span>{{ plural(d.totals.checkouts, "выезд", "выезда", "выездов") }}</span></div>
 					</div>
 					<div v-if="d.arrivals.length || d.departures.length" class="moves">
 						<router-link v-for="r in d.arrivals.slice(0, 3)" :key="'a' + r.id" :to="rackLink(r)" class="move">
@@ -139,7 +141,7 @@ const plural = (n, one, few, many) => {
 				</Card>
 
 				<!-- Требует внимания -->
-				<Card pad="lg">
+				<Card pad="lg" class="k-rise" style="--i: 2">
 					<div class="card-h"><Icon name="bell" /> Требует внимания</div>
 					<div v-if="!attention.length" class="allgood">
 						<span class="allgood__ic"><Icon name="check" size="1.4rem" /></span>
@@ -158,7 +160,7 @@ const plural = (n, one, few, many) => {
 			</div>
 
 			<!-- Прогноз -->
-			<Card pad="lg">
+			<Card pad="lg" class="k-rise" style="--i: 3">
 				<div class="spread fc-head">
 					<div>
 						<div class="card-h" style="margin: 0"><Icon name="trending-up" /> Свободные места на 2 недели</div>
@@ -178,6 +180,7 @@ const plural = (n, one, few, many) => {
 						:key="x.date"
 						class="fc__col"
 						:class="{ on: hover === x.date, today: x.date === d.date, we: isWeekend(x.date) }"
+						:style="{ '--n': d.trend.indexOf(x) }"
 						@mouseenter="hover = x.date"
 					>
 						<span class="fc__free">{{ x.free }}</span>
@@ -197,7 +200,7 @@ const plural = (n, one, few, many) => {
 			</Card>
 
 			<!-- Гостиницы -->
-			<Card pad="lg">
+			<Card pad="lg" class="k-rise" style="--i: 4">
 				<div class="card-h"><Icon name="building" /> Гостиницы <span class="muted card-h__sub">сначала самые загруженные · клик — календарь</span></div>
 				<EmptyState v-if="!d.hotels.length" icon="building" title="Гостиниц пока нет" text="Добавьте первую в разделе «Гостиницы и номера»">
 					<Button to="/app/hotels" icon="plus">Добавить гостиницу</Button>
@@ -527,6 +530,17 @@ const plural = (n, one, few, many) => {
 	border-radius: 6px 6px 0 0;
 	opacity: 0.85;
 	transition: height 400ms ease;
+	/* столбики вырастают снизу по очереди */
+	transform-origin: bottom;
+	animation: fc-grow 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.fc__col:nth-child(n) .fc__bar {
+	animation-delay: calc(var(--n, 0) * 25ms);
+}
+@keyframes fc-grow {
+	from {
+		transform: scaleY(0);
+	}
 }
 .fc__col.on .fc__bar {
 	opacity: 1;

@@ -1,12 +1,17 @@
 <script setup>
+import { ref } from "vue"
 import Icon from "@/components/Icon.vue"
+import { useIndicator } from "./useIndicator"
 
 const model = defineModel({ type: [String, Number], default: "" })
-defineProps({ options: { type: Array, default: () => [] } })
+const props = defineProps({ options: { type: Array, default: () => [] } })
+const root = ref(null)
+const bar = useIndicator(root, () => [model.value, props.options.map((o) => o.label + o.count)])
 </script>
 
 <template>
-	<div class="k-tabs" role="tablist">
+	<div ref="root" class="k-tabs" role="tablist">
+		<span class="k-tabs__bar" :style="bar" aria-hidden="true" />
 		<button
 			v-for="o in options"
 			:key="o.value"
@@ -50,6 +55,7 @@ defineProps({ options: { type: Array, default: () => [] } })
 	padding: var(--gap-sm) var(--gap-md);
 	border-bottom: 2px solid transparent;
 	cursor: pointer;
+	transition: color var(--speed);
 	white-space: nowrap;
 }
 .k-tab:hover {
@@ -57,7 +63,20 @@ defineProps({ options: { type: Array, default: () => [] } })
 }
 .k-tab.on {
 	color: var(--color-brand);
-	border-bottom-color: var(--color-brand);
+}
+/* Подчёркивание одно на всех — переезжает к выбранной вкладке */
+.k-tabs {
+	position: relative;
+}
+.k-tabs__bar {
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	height: 2px;
+	border-radius: 2px;
+	background: var(--color-brand);
+	transition: transform 260ms cubic-bezier(0.3, 0.7, 0.2, 1), width 260ms cubic-bezier(0.3, 0.7, 0.2, 1);
+	pointer-events: none;
 }
 .k-tab__count {
 	font-size: var(--font-size-xs);

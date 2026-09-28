@@ -5,6 +5,7 @@ import { useAuthStore } from "@/stores/auth"
 import { useCounters } from "@/stores/counters"
 import { onRealtime } from "@/realtime"
 import { STAFF_NAV } from "@/config/nav"
+import { theme, toggleTheme } from "@/utils/theme"
 import Icon from "@/components/Icon.vue"
 import CommandPalette from "@/components/CommandPalette.vue"
 import { IconButton, Badge, Avatar } from "@/ui"
@@ -14,7 +15,6 @@ const route = useRoute()
 const auth = useAuthStore()
 const counters = useCounters()
 
-const theme = ref(document.documentElement.getAttribute("data-theme") || "dark")
 const mobileOpen = ref(false)
 const paletteOpen = ref(false)
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
@@ -53,11 +53,6 @@ onUnmounted(() => window.removeEventListener("keydown", onGlobalKey))
 function badgeValue(item) {
 	return item.badge ? counters[item.badge] : 0
 }
-function toggleTheme() {
-	theme.value = theme.value === "dark" ? "light" : "dark"
-	document.documentElement.setAttribute("data-theme", theme.value)
-	localStorage.setItem("noch_theme", theme.value)
-}
 function logout() {
 	auth.logout()
 	router.push({ name: "login" })
@@ -86,7 +81,7 @@ onUnmounted(stopRealtime)
 					<router-link v-for="item in g.items" :key="item.to" :to="item.to" active-class="active" class="nav__link">
 						<Icon :name="item.icon" />
 						<span class="nav__label">{{ item.label }}</span>
-						<Badge v-if="badgeValue(item) > 0" variant="danger">{{ badgeValue(item) }}</Badge>
+						<Badge v-if="badgeValue(item) > 0" :key="badgeValue(item)" variant="danger" class="nav__badge">{{ badgeValue(item) }}</Badge>
 					</router-link>
 				</template>
 			</nav>
@@ -174,6 +169,17 @@ onUnmounted(stopRealtime)
 	background: transparent;
 	cursor: pointer;
 	font-family: inherit;
+}
+.nav__badge {
+	animation: badge-pop 420ms cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+@keyframes badge-pop {
+	from {
+		transform: scale(0.4);
+	}
+}
+.nav__link {
+	transition: background-color var(--speed-fast), color var(--speed-fast);
 }
 .nav__label {
 	flex: 1;
