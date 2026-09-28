@@ -7,6 +7,7 @@ import { api, post, put, del, download } from "@/api/client"
 import { toast } from "@/toast"
 import { useAuthStore } from "@/stores/auth"
 import Modal from "@/components/Modal.vue"
+import ImportResidents from "@/components/ImportResidents.vue"
 import {
 	PageHeader, SegmentedControl, FilterBar, Input, Button, IconButton, DataTable, Drawer, Tabs,
 	Field, Textarea, Select, Avatar, Chip, StatusDot, EmptyState, confirm,
@@ -38,23 +39,59 @@ const creds = ref(null)
 
 const residentColumns = [
 	{ key: "full_name", label: "ФИО", sortable: true },
-	{ key: "tab_number", label: "Табельный №", sortable: true },
-	{ key: "company", label: "Организация", sortable: true },
-	{ key: "department", label: "Подразделение", sortable: true },
-	{ key: "position", label: "Должность" },
-	{ key: "account_username", label: "Доступ" },
+	{ key: "tab_number", label: "Таб. №", sortable: true },
+	{ key: "department", label: "Подразделение · должность", sortable: true },
+	{ key: "stay_place", label: "Где живёт", sortable: true },
+	{ key: "account_username", label: "Кабинет" },
 ]
 const stageLabel = { expected: "Ожидается", checked_in: "Проживает", checked_out: "Выехал", cancelled: "Отменён" }
 
 let timer
-function onSearch() {
-	clearTimeout(timer)
-	timer = setTimeout(loadResidents, 250)
+// Список грузим целиком и фильтруем на месте: сотни и даже тысячи строк
+// отбираются мгновенно, без запроса на каждую букву
+const fCompany = ref("")
+const fDept = ref("")
+const fStatus = ref("all")
+const showImport = ref(false)
+const norm = (s) => String(s || "").toLowerCase().replace(/ё/g, "е")
+const uniq = (key) => [...new Set(residents.value.map((r) => r[key]).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ru"))
+const companies = computed(() => uniq("company"))
+const departments = computed(() => uniq("department"))
+const statusOptions = computed(() => [
+	{ value: "all", label: "Все", count: residents.value.length },
+	{ value: "living", label: "Проживают", count: residents.value.filter((r) => r.stay_place).length },
+	{ value: "away", label: "Не живут", count: residents.value.filter((r) => !r.stay_place).length },
+	{ value: "noacc", label: "Без кабинета", count: residents.value.filter((r) => !r.account_username).length },
+])
+const filtered = computed(() => {
+	const n = norm(q.value.trim())
+	return residents.value.filter(
+		(r) =>
+			(!n || norm(r.full_name).includes(n) || norm(r.tab_number).includes(n)) &&
+			(!fCompany.value || r.company === fCompany.value) &&
+			(!fDept.value || r.department === fDept.value) &&
+			(fStatus.value === "all" ||
+				(fStatus.value === "living" && r.stay_place) ||
+				(fStatus.value === "away" && !r.stay_place) ||
+				(fStatus.value === "noacc" && !r.account_username)),
+	)
+})
+const filtersOn = computed(() => !!(q.value || fCompany.value || fDept.value || fStatus.value !== "all"))
+function resetFilters() {
+	q.value = ""
+	fCompany.value = ""
+	fDept.value = ""
+	fStatus.value = "all"
 }
+function onImported() {
+	showImport.value = false
+	loadResidents()
+}
+const stayTo = (v) => new Date(v + "T00:00:00").toLocaleDateString("ru-RU", { day: "numeric", month: "short" })
 async function loadResidents() {
 	loadingR.value = true
 	try {
-		residents.value = await api("/residents?q=" + encodeURIComponent(q.value))
+		residents.value = await api("/residents")
 	} finally {
 		loadingR.value = false
 	}
@@ -251,6 +288,8 @@ const fmt = (d) => dateTime(d, { dateStyle: "medium" })
 		<PageHeader title="Профили" subtitle="Вахтовики и персонал — в одном месте" icon="users">
 			<template #actions>
 				<template v-if="view === 'residents'">
+					<Button icon="download" @click="download('/export/residents')">Экспорт</Button>
+					<Button v-if="canEdit" icon="upload" @click="showImport = true">Импорт из Excel</Button>
 					<Button v-if="canAdmin" icon="key" @click="bulkIssue">Доступ всем</Button>
 					<Button v-if="canEdit" variant="primary" icon="plus" @click="newResident">Вахтовик</Button>
 				</template>
@@ -262,22 +301,55 @@ const fmt = (d) => dateTime(d, { dateStyle: "medium" })
 
 		<!-- Вахтовики -->
 		<template v-if="view === 'residents'">
-			<FilterBar>
-				<Input v-model="q" placeholder="Поиск по ФИО / табельному №" @input="onSearch" style="min-width: 280px" />
-			</FilterBar>
-			<DataTable :columns="residentColumns" :rows="residents" :loading="loadingR" @row-click="openProfile" empty-title="Никого не найдено" empty-icon="users">
+			<div class="filters">
+				<div class="filters__search">
+					<Icon name="search" class="filters__ic" />
+					<Input v-model="q" placeholder="ФИО или табельный №" style="padding-left: 2.2rem" />
+				</div>
+				<Select v-if="companies.length > 1" v-model="fCompany" style="width: auto; max-width: 14rem">
+					<option value="">Все организации</option>
+					<option v-for="c in companies" :key="c" :value="c">{{ c }}</option>
+				</Select>
+				<Select v-if="departments.length > 1" v-model="fDept" style="width: auto; max-width: 20rem">
+					<option value="">Все подразделения</option>
+					<option v-for="d in departments" :key="d" :value="d">{{ d }}</option>
+				</Select>
+				<SegmentedControl v-model="fStatus" :options="statusOptions" />
+				<Button v-if="filtersOn" variant="ghost" size="sm" icon="x" @click="resetFilters">Сбросить</Button>
+			</div>
+			<DataTable
+				:columns="residentColumns"
+				:rows="filtered"
+				:loading="loadingR"
+				:page-size="50"
+				empty-icon="users"
+				:empty-title="residents.length ? 'Никого не найдено' : 'Список пуст'"
+				:empty-text="residents.length ? 'Измените поиск или фильтры' : 'Добавьте вахтовика вручную или загрузите выгрузку из Excel'"
+				@row-click="openProfile"
+			>
 				<template #cell-full_name="{ row }">
 					<div class="row" style="gap: var(--gap-sm)">
 						<Avatar :src="row.photo" :name="row.full_name" size="2rem" />
 						<b class="contrast">{{ row.full_name }}</b>
 					</div>
 				</template>
-				<template #cell-tab_number="{ value }"><span :class="value ? '' : 'muted'">{{ value || "—" }}</span></template>
-				<template #cell-company="{ value }"><span :class="value ? '' : 'muted'">{{ value || "—" }}</span></template>
-				<template #cell-position="{ value }"><span :class="value ? '' : 'muted'">{{ value || "—" }}</span></template>
+				<template #cell-tab_number="{ value }"><span :class="value ? 'mono' : 'muted'">{{ value || "—" }}</span></template>
+				<template #cell-department="{ row }">
+					<div class="cell2">
+						<span :class="row.department ? '' : 'muted'">{{ row.department || "—" }}</span>
+						<span class="muted">{{ [row.position, row.company].filter(Boolean).join(" · ") }}</span>
+					</div>
+				</template>
+				<template #cell-stay_place="{ row }">
+					<div v-if="row.stay_place" class="cell2">
+						<span class="contrast">{{ row.stay_place }}</span>
+						<span class="muted">до {{ stayTo(row.stay_to) }}</span>
+					</div>
+					<span v-else class="muted">—</span>
+				</template>
 				<template #cell-account_username="{ row }">
-					<Chip v-if="row.account_username" color="var(--color-green)" dot>{{ row.account_username }}<template v-if="row.account_must_change"> · не сменён</template></Chip>
-					<span v-else class="muted" style="font-size: var(--font-size-xs)">нет доступа</span>
+					<Chip v-if="row.account_username" :color="row.account_must_change ? 'var(--color-orange)' : 'var(--color-green)'" dot>{{ row.account_must_change ? "выдан" : "входил" }}</Chip>
+					<span v-else class="muted" style="font-size: var(--font-size-xs)">нет</span>
 				</template>
 				<template #actions="{ row }">
 					<IconButton icon="download" label="Отчёт" size="sm" @click="report(row)" />
@@ -447,6 +519,8 @@ const fmt = (d) => dateTime(d, { dateStyle: "medium" })
 			</template>
 		</Drawer>
 
+		<ImportResidents v-if="showImport" @close="showImport = false" @done="onImported" />
+
 		<!-- Реквизиты -->
 		<Modal v-if="creds" :title="creds.title" persistent @close="closeCreds">
 			<p class="creds-hint"><Icon name="alert-triangle" /> Пароль показывается только сейчас. Распечатайте карточки или скопируйте — вахтовик сменит пароль при первом входе.</p>
@@ -470,6 +544,38 @@ const fmt = (d) => dateTime(d, { dateStyle: "medium" })
 	display: grid;
 	grid-template-columns: 1fr 1fr;
 	gap: var(--gap-md);
+}
+.filters {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--gap-sm);
+}
+.filters__search {
+	position: relative;
+	flex: 1;
+	min-width: 220px;
+	max-width: 360px;
+}
+.filters__ic {
+	position: absolute;
+	left: 0.8rem;
+	top: 50%;
+	transform: translateY(-50%);
+	color: var(--color-secondary);
+	pointer-events: none;
+	z-index: 1;
+}
+.cell2 {
+	display: grid;
+	line-height: 1.3;
+}
+.cell2 .muted {
+	font-size: var(--font-size-xs);
+}
+.mono {
+	font-family: var(--font-mono);
+	font-size: var(--font-size-xs);
 }
 /* Карточка вахтовика */
 .ph {

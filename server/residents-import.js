@@ -85,8 +85,15 @@ function detectColumns(headers, rows) {
 		return best
 	}
 
+	// Короткие подразделения («Геологический отдел») тоже выглядят как два слова
+	// кириллицей. Поэтому колонки с заголовком «подразделение/должность/организация»
+	// в ФИО не берём, а при равенстве выигрывает та, где есть отчества (-вич/-вна).
+	const fieldCols = Object.values(FIELD_KEYWORDS).flatMap(allByHeader)
+	const patr = (v) => /(вич|вна|ична|оглы|кызы|улы)$/i.test(String(v || "").trim().split(/\s+/)[2] || "")
+	const fioScore = fioShare.map((s, c) => (s >= 0.5 ? s + shareOf(c, patr) : 0))
 	let name = byHeader(NAME_KEYWORDS)
-	if (name < 0 || fioShare[name] < 0.5) name = bestBy(fioShare, [])
+	if (name < 0 || fioShare[name] < 0.5) name = bestBy(fioScore, fieldCols)
+	if (name < 0) name = bestBy(fioScore, [])
 
 	// Табельный номер бывает и с буквами («В-101», «A-1001»), поэтому проверка по
 	// содержимому здесь только отсеивающая: из колонок с подходящим заголовком

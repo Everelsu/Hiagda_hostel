@@ -1758,8 +1758,13 @@ api.get("/rack", async (req, res) => {
 			 WHERE r.hotel_id = ? ORDER BY r.floor, r.number`,
 		)
 		.all(hotel_id)
-	const bedsStmt = db.prepare("SELECT id, label FROM beds WHERE room_id = ? ORDER BY id")
-	for (const room of rooms) room.beds = await bedsStmt.all(room.id)
+	// Места всех номеров одним запросом: запрос на каждый номер в доме на сотни мест
+	// превращал каждое обновление шахматки в сотни обращений к базе
+	const beds = await db
+		.prepare("SELECT b.id, b.label, b.room_id FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.hotel_id = ? ORDER BY b.id")
+		.all(hotel_id)
+	const byRoom = new Map(rooms.map((r) => [r.id, (r.beds = [])]))
+	for (const b of beds) byRoom.get(b.room_id)?.push({ id: b.id, label: b.label })
 	const placements = await db
 		.prepare(
 			`${placementSelect}

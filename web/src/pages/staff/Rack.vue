@@ -19,8 +19,10 @@ import Icon from "@/components/Icon.vue"
 import Modal from "@/components/Modal.vue"
 import { PageHeader, Select, Input, Button, StatusDot, confirm, DateInput } from "@/ui"
 
-const COL = 40
-const ROW = 34
+// Ширина дня подстраивается под экран (чтобы 7–30 дней не оставляли пустоту справа),
+// высота строки — плотность: «компактно» помещает вдвое больше мест на экран.
+const colW = ref(40)
+const rowH = ref(34)
 const NUM = 104
 const BED = 64
 const LEFT = NUM + BED
@@ -143,15 +145,15 @@ const layout = computed(() => {
 	function pushRibbon(p, bedId, dFrom, dTo, isGhost = false) {
 		const startOff = dayDiff(from.value, dFrom)
 		const endOff = dayDiff(from.value, dTo)
-		const leftPx = startOff >= 0 ? (startOff + 0.5) * COL : 0
-		const rightPx = endOff <= s - 1 ? (endOff + 0.5) * COL : s * COL
+		const leftPx = startOff >= 0 ? (startOff + 0.5) * colW.value : 0
+		const rightPx = endOff <= s - 1 ? (endOff + 0.5) * colW.value : s * colW.value
 		ribbons.push({
 			id: p.id,
 			p,
 			ghost: isGhost,
 			row: bedRowMap.get(bedId),
 			leftPx,
-			width: Math.max(rightPx - leftPx, COL * 0.5),
+			width: Math.max(rightPx - leftPx, colW.value * 0.5),
 			roundL: startOff >= 0,
 			roundR: endOff <= s - 1,
 			color: p.status_color,
@@ -181,7 +183,7 @@ const layout = computed(() => {
 		const c0 = Math.max(0, dayDiff(from.value, b.date_from))
 		const c1 = Math.min(s - 1, dayDiff(from.value, b.date_to))
 		if (c1 < c0) continue
-		bands.push({ id: b.id, top: fr.top * ROW, height: fr.height * ROW, leftPx: c0 * COL, width: (c1 - c0 + 1) * COL, reason: b.reason })
+		bands.push({ id: b.id, top: fr.top * rowH.value, height: fr.height * rowH.value, leftPx: c0 * colW.value, width: (c1 - c0 + 1) * colW.value, reason: b.reason })
 		for (const f of flatBeds.value) {
 			if (f.room.id !== b.room_id) continue
 			if (!blk.has(f.bed.id)) blk.set(f.bed.id, new Set())
@@ -209,8 +211,8 @@ const layout = computed(() => {
 		cellPl,
 		freePerDay,
 		totalBeds,
-		todayX: todayOff >= 0 && todayOff < s ? (todayOff + 0.5) * COL : null,
-		height: totalBeds * ROW,
+		todayX: todayOff >= 0 && todayOff < s ? (todayOff + 0.5) * colW.value : null,
+		height: totalBeds * rowH.value,
 	}
 })
 const lowThresh = computed(() => Math.max(1, Math.round(layout.value.totalBeds * 0.2)))
@@ -334,8 +336,8 @@ function locate(clientX, clientY) {
 	const x = clientX - rect.left + el.scrollLeft
 	const y = clientY - rect.top + el.scrollTop
 	if (x < LEFT || y < HEAD) return { region: "frozen" }
-	const col = Math.floor((x - LEFT) / COL)
-	const row = Math.floor((y - HEAD) / ROW)
+	const col = Math.floor((x - LEFT) / colW.value)
+	const row = Math.floor((y - HEAD) / rowH.value)
 	const f = flatBeds.value[row]
 	if (col < 0 || col >= span.value || !f) return { region: "outside" }
 	return {
@@ -351,8 +353,8 @@ function locate(clientX, clientY) {
 
 // Где именно на ленте курсор: край (resize) или середина (move)
 function ribbonZone(p, gx) {
-	const l = (dayDiff(from.value, p.date_from) + 0.5) * COL
-	const r = (dayDiff(from.value, p.date_to) + 0.5) * COL
+	const l = (dayDiff(from.value, p.date_from) + 0.5) * colW.value
+	const r = (dayDiff(from.value, p.date_to) + 0.5) * colW.value
 	if (gx - l <= EDGE) return "resize-l"
 	if (r - gx <= EDGE) return "resize-r"
 	return "move"
@@ -660,17 +662,17 @@ function onKey(e) {
 watch([hotelId], () => {})
 
 const gridStyle = computed(() => ({
-	"--rack-col": COL + "px",
-	"--rack-row": ROW + "px",
+	"--rack-col": colW.value + "px",
+	"--rack-row": rowH.value + "px",
 	"--rack-num": NUM + "px",
 	"--rack-bed": BED + "px",
-	width: LEFT + span.value * COL + "px",
+	width: LEFT + span.value * colW.value + "px",
 }))
 const selStyle = computed(() => {
 	if (!sel.active) return null
 	const a = Math.min(sel.a, sel.b)
 	const b = Math.max(sel.a, sel.b)
-	return { top: sel.row * ROW + "px", left: a * COL + "px", width: (b - a + 1) * COL + "px", height: ROW + "px" }
+	return { top: sel.row * rowH.value + "px", left: a * colW.value + "px", width: (b - a + 1) * colW.value + "px", height: rowH.value + "px" }
 })
 </script>
 
@@ -744,7 +746,7 @@ const selStyle = computed(() => {
 						<span class="corner__free">свободных мест</span>
 					</div>
 					<div class="months">
-						<div v-for="m in monthSpans" :key="m.key" class="month" :style="{ width: m.colspan * COL + 'px' }">{{ m.label }}</div>
+						<div v-for="m in monthSpans" :key="m.key" class="month" :style="{ width: m.colspan * colW + 'px' }">{{ m.label }}</div>
 					</div>
 					<div class="daysrow">
 						<div v-for="d in dayInfo" :key="d.date" class="day" :class="{ we: d.weekend, today: d.today }" :title="fullDate(d.date)">
@@ -764,7 +766,7 @@ const selStyle = computed(() => {
 				<!-- тело -->
 				<div class="body" :style="{ height: layout.height + 'px' }">
 					<div class="rowlabels">
-						<div v-for="f in flatBeds" :key="f.bed.id" class="rowlabel" :style="{ top: f.rowIndex * ROW + 'px' }">
+						<div v-for="f in flatBeds" :key="f.bed.id" class="rowlabel" :style="{ top: f.rowIndex * rowH + 'px' }">
 							<div class="num" :class="{ first: f.first }">
 								<template v-if="f.first"><b>№ {{ f.room.number }}</b><span class="cls">{{ f.room.class_name || "—" }}</span></template>
 							</div>
@@ -772,9 +774,9 @@ const selStyle = computed(() => {
 						</div>
 					</div>
 
-					<div class="canvas" :style="{ width: span * COL + 'px', height: layout.height + 'px' }">
-						<div v-for="(d, i) in dayInfo" :key="d.date" class="colline" :class="{ we: d.weekend }" :style="{ left: i * COL + 'px' }" />
-						<div v-for="f in flatBeds" :key="'r' + f.bed.id" class="rowline" :style="{ top: (f.rowIndex + 1) * ROW + 'px' }" />
+					<div class="canvas" :style="{ width: span * colW + 'px', height: layout.height + 'px' }">
+						<div v-for="(d, i) in dayInfo" :key="d.date" class="colline" :class="{ we: d.weekend }" :style="{ left: i * colW + 'px' }" />
+						<div v-for="f in flatBeds" :key="'r' + f.bed.id" class="rowline" :style="{ top: (f.rowIndex + 1) * rowH + 'px' }" />
 						<div v-if="layout.todayX != null" class="todayline" :style="{ left: layout.todayX + 'px' }" />
 
 						<div
@@ -802,7 +804,7 @@ const selStyle = computed(() => {
 								hit: r.hit,
 								sel: !r.ghost && r.id === selectedId,
 							}"
-							:style="{ top: r.row * ROW + 3 + 'px', left: r.leftPx + 'px', width: r.width + 'px', height: ROW - 6 + 'px', '--rc': r.color, color: r.text }"
+							:style="{ top: r.row * rowH + 3 + 'px', left: r.leftPx + 'px', width: r.width + 'px', height: rowH - 6 + 'px', '--rc': r.color, color: r.text }"
 						>
 							<span class="rlabel">{{ r.label }}</span>
 							<i v-if="!r.ghost && canEdit" class="grip grip-l" />

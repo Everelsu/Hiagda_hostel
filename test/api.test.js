@@ -550,3 +550,37 @@ test("в день выезда место снова свободно для п�
 	const free = await call("GET", `/availability?hotel_id=${hotel.json.id}&from=2028-11-10&to=2028-11-15`, { token: adminToken })
 	assert.equal(free.json.totals.free_beds, 1, "с дня выезда место снова доступно")
 })
+
+test("импорт выгрузки: предпросмотр ничего не пишет, повтор не плодит дублей", async () => {
+	// Как в файле заказчика: ФИО под заголовком «Табельный номер», имена заглавными
+	const ExcelJS = require("exceljs")
+	const wb = new ExcelJS.Workbook()
+	const ws = wb.addWorksheet("Sheet1")
+	ws.addRow(["Таб.№", "Табельный номер", "Шт.должность (полное)", "Подразделение (полное)", "Балансовая единица"])
+	ws.addRow(["77000001", "СЕМЁНОВ СЕМЁН СЕМЁНОВИЧ", "Геолог", "Геологический отдел", "АО «Хиагда»"])
+	ws.addRow(["77000002", "Орлова Анна Павловна", "Инженер", "Отдел ОТ", "АО «Хиагда»"])
+	ws.addRow(["", "Итого: 2", "", "", ""])
+	const buf = Buffer.from(await wb.xlsx.writeBuffer())
+	const send = async (dry) => {
+		const fd = new FormData()
+		fd.append("file", new Blob([buf]), "v.xlsx")
+		const r = await fetch(`${base}/import/residents${dry ? "?dry=1" : ""}`, { method: "POST", headers: { Authorization: `Bearer ${adminToken}` }, body: fd })
+		return r.json()
+	}
+	const count = async () => (await call("GET", "/residents", { token: adminToken })).json.length
+
+	const before = await count()
+	const dry = await send(true)
+	assert.equal(dry.imported, 2)
+	assert.equal(dry.skipped, 1, "строка итогов пропускается")
+	assert.equal(await count(), before, "предпросмотр не пишет в базу")
+
+	const real = await send(false)
+	assert.equal(real.imported, 2)
+	const list = (await call("GET", "/residents", { token: adminToken })).json
+	assert.ok(list.some((r) => r.full_name === "Семёнов Семён Семёнович" && r.tab_number === "77000001" && r.department === "Геологический отдел"))
+
+	const again = await send(true)
+	assert.equal(again.imported, 0, "повторная выгрузка не создаёт дублей")
+	assert.equal(again.same, 2)
+})
