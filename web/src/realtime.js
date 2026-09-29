@@ -3,6 +3,7 @@ import { getToken } from "@/api/client"
 let socket = null
 let reconnectTimer = null
 let manuallyClosed = false
+let everOpened = false
 const listeners = new Set()
 
 function scheduleReconnect() {
@@ -22,6 +23,11 @@ export function connectRealtime() {
 		} catch {
 			// Ignore malformed messages so a reconnect can recover the connection.
 		}
+	}
+	// Переподключились после обрыва — например, сервер перезапустился на новую версию
+	socket.onopen = () => {
+		if (everOpened) window.dispatchEvent(new CustomEvent("noch:reconnected"))
+		everOpened = true
 	}
 	socket.onclose = scheduleReconnect
 	socket.onerror = () => socket?.close()

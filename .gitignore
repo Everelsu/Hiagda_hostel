@@ -15,3 +15,5 @@ docs/practice/fig_seq.png
 docs/practice/Отчет_по_практике_НочОтель.docx
 /docs
 /data/uploads
+# Служебные файлы автообновления (scripts/update.sh)
+/data/update-*

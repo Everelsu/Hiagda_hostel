@@ -16,6 +16,7 @@ const { sign, authenticate, requireRole, requireStaff, requireRepair, canRepair 
 const { createRealtimeServer, STAFF_ROLES } = require("./realtime")
 const { detectColumns, isFio, titleCase } = require("./residents-import")
 const backups = require("./backups")
+const storage = require("./storage")
 
 let realtime = null
 const broadcast = (type, payload, canReceive) => realtime?.broadcast(type, payload, canReceive)
@@ -115,7 +116,8 @@ app.use(express.json())
 
 const upload = multer({ storage: multer.memoryStorage() })
 
-const uploadsDir = path.join(__dirname, "..", "data", "uploads")
+// UPLOADS_DIR — для тестов: уборка в них не должна видеть настоящие фото с диска
+const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, "..", "data", "uploads")
 fs.mkdirSync(uploadsDir, { recursive: true })
 const IMAGE_MIME = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif" }
 const uploadImage = multer({
@@ -167,6 +169,16 @@ api.post("/register-admin", async (req, res) => {
 
 // Настройки для браузера до входа. Ключ JS API Яндекса в любом случае виден в коде
 // страницы, поэтому отдаём его открыто (ограничение — по HTTP Referer в кабинете Яндекса).
+// Для автообновления и мониторинга: жив ли сервер, отвечает ли база, какая версия
+api.get("/health", async (_req, res) => {
+	try {
+		await db.prepare("SELECT 1 AS ok").get()
+		res.json({ ok: true, version: process.env.APP_VERSION || "dev" })
+	} catch (e) {
+		res.status(503).json({ ok: false, error: "база недоступна" })
+	}
+})
+
 api.get("/public-config", (_req, res) => res.json({ yandexMapsKey: process.env.YANDEX_MAPS_KEY || null }))
 
 api.post("/login", async (req, res) => {
@@ -813,6 +825,40 @@ api.delete("/info/:id", requireRole("editor"), async (req, res) => {
 })
 
 api.use("/admin/backups", requireRole("admin"), backups.router)
+
+// Место на диске и уборка (см. server/storage.js)
+api.get("/admin/storage", requireRole("admin"), async (_req, res) => res.json(await storage.plan()))
+api.post("/admin/storage/cleanup", requireRole("admin"), async (_req, res) => res.json(await storage.cleanup()))
+
+// Версия и итог последнего автообновления (его пишет scripts/update.sh в data/update-status.json)
+const dataFile = (name) => path.join(__dirname, "..", "data", name)
+const readText = (name) => {
+	try {
+		return fs.readFileSync(dataFile(name), "utf8").trim()
+	} catch {
+		return null
+	}
+}
+api.get("/admin/version", requireRole("admin"), async (_req, res) => {
+	let update = null
+	try {
+		update = JSON.parse(readText("update-status.json"))
+	} catch {}
+	res.json({
+		version: process.env.APP_VERSION || "dev",
+		built_at: process.env.APP_BUILT_AT || null,
+		update,
+		checked_at: readText("update-checked-at"), // пишет scripts/update.sh при каждой проверке
+		requested_at: readText("update-request"),
+	})
+})
+// «Проверить сейчас»: файл-сигнал, его ловит systemd (hiagda-update.path) и запускает update.sh.
+// Приложению не нужны ни root, ни доступ к Docker.
+api.post("/admin/update/check", requireRole("admin"), async (_req, res) => {
+	const at = new Date().toISOString()
+	fs.writeFileSync(dataFile("update-request"), at + "\n")
+	res.json({ requested_at: at })
+})
 
 api.get("/audit", requireRole("admin"), async (req, res) => {
 	const limit = Math.min(500, Number(req.query.limit) || 200)
@@ -2343,7 +2389,13 @@ api.put("/issues/:id/status", requireRepair, async (req, res) => {
 		.prepare("SELECT ri.user_id, ri.room_id, ri.amenity_name, ri.status, rm.number AS room_number FROM room_issues ri JOIN rooms rm ON rm.id = ri.room_id WHERE ri.id = ?")
 		.get(req.params.id)
 	if (!issue) return res.status(404).json({ error: "Заявка не найдена" })
-	await db.prepare("UPDATE room_issues SET status = ? WHERE id = ?").run(status, req.params.id)
+	await db
+		.prepare(
+			`UPDATE room_issues SET status = ?,
+			   closed_at = CASE WHEN ? = 'Починено' THEN COALESCE(closed_at, to_char((now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD HH24:MI:SS')) ELSE NULL END
+			 WHERE id = ?`,
+		)
+		.run(status, status, req.params.id)
 	if (status !== issue.status)
 		push.notify([issue.user_id, ...(await roomUserIds(issue.room_id))].filter((id) => id !== req.user.id), {
 			title: `${{ Починено: "Починили", "В работе": "Взяли в работу" }[status] || "Снова открыта"}: ${issue.amenity_name || "заявка"}`,
@@ -2440,7 +2492,10 @@ const ready = db.ready
 			const addr = server.address()
 			console.log(`Хиагда запущена: http://localhost:${typeof addr === "object" && addr ? addr.port : PORT}`)
 		})
-		if (require.main === module) backups.schedule()
+		if (require.main === module) {
+			backups.schedule()
+			storage.schedule()
+		}
 	})
 	.catch((e) => {
 		console.error("Не удалось подготовить базу PostgreSQL:", e.message)

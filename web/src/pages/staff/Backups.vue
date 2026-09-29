@@ -11,6 +11,89 @@ const creating = ref(false)
 const restoring = ref("")
 let poll = null
 
+// Место на диске и версия — отдельно: их запросы не должны задерживать список копий
+const st = ref(null)
+const ver = ref(null)
+const cleaning = ref(false)
+const loadExtra = () => {
+	api("/admin/storage").then((r) => (st.value = r)).catch(() => {})
+	api("/admin/version").then((r) => (ver.value = r)).catch(() => {})
+}
+const freeable = computed(() => (st.value ? st.value.orphans.size + st.value.old_photos.size + st.value.snapshots.size : 0))
+async function cleanNow() {
+	const s = st.value
+	const parts = [
+		s.orphans.count && `${s.orphans.count} ненужных файлов (${size(s.orphans.size)}) — на них уже ничто не ссылается`,
+		s.old_photos.count && `фото ${s.old_photos.issues} заявок, починенных больше ${s.keep_days} дней назад (${size(s.old_photos.size)}); текст переписки останется`,
+		s.snapshots.count && `${s.snapshots.count} старых снимков перед восстановлением (${size(s.snapshots.size)})`,
+	].filter(Boolean)
+	const ok = await confirm({
+		title: `Освободить ${size(freeable.value)}?`,
+		message: "Будет удалено: " + parts.join("; ") + ". Удалённое ещё несколько дней лежит в резервных копиях.",
+		confirmLabel: "Очистить",
+		danger: true,
+	})
+	if (!ok) return
+	cleaning.value = true
+	try {
+		const r = await post("/admin/storage/cleanup", {})
+		toast.success(`Освобождено ${size(r.freed)}`)
+	} catch (e) {
+		toast.error(e.message)
+	} finally {
+		cleaning.value = false
+		loadExtra()
+	}
+}
+// «Проверить сейчас»: просим сервер проверить репозиторий и ждём, пока он отчитается
+const checking = ref(false)
+const showAllChanges = ref(false)
+let checkTimer = 0
+const after = (a, b) => a && b && new Date(a) >= new Date(b)
+async function checkNow() {
+	checking.value = true
+	try {
+		const { requested_at } = await post("/admin/update/check", {})
+		const before = ver.value?.update?.at
+		const startVersion = ver.value?.version
+		const deadline = Date.now() + 4 * 60e3
+		const tick = async () => {
+			try {
+				ver.value = await api("/admin/version")
+			} catch {
+				// сервер перезапускается на новую версию — просто ждём
+			}
+			const v = ver.value
+			// Новая версия отвечает на пару секунд раньше, чем скрипт запишет итог, — ждём и его
+			if (v.version !== startVersion && v.update?.at !== before) {
+				checking.value = false
+				// Кнопку «Обновить страницу» покажет общий тост о новой версии (App.vue) — здесь без дубля
+				return toast.success(`Обновлено до ${v.version}`)
+			}
+			if (v.update?.at !== before && v.update?.result !== "ok") {
+				checking.value = false
+				return toast.error(v.update.message)
+			}
+			if (after(v.checked_at, requested_at) && v.update?.at === before) {
+				checking.value = false
+				return toast.success("Обновлений нет — работает последняя версия")
+			}
+			if (Date.now() > deadline) {
+				checking.value = false
+				return toast.error("Сервер не ответил на проверку. Автообновление установлено? sudo bash scripts/update.sh --install")
+			}
+			checkTimer = setTimeout(tick, 4000)
+		}
+		checkTimer = setTimeout(tick, 3000)
+	} catch (e) {
+		checking.value = false
+		toast.error(e.message)
+	}
+}
+onUnmounted(() => clearTimeout(checkTimer))
+const UPD = { ok: ["Обновлено", "var(--color-green)"], failed: ["Не обновилось", "var(--color-red)"], rolled_back: ["Откат на прежнюю", "var(--color-orange)"] }
+onMounted(loadExtra)
+
 async function load() {
 	d.value = await api("/admin/backups")
 	// Пока идёт операция (в том числе ночной автобэкап) — обновляем сами
@@ -43,6 +126,7 @@ function ago(iso) {
 }
 function size(bytes) {
 	if (bytes == null) return "—"
+	if (!bytes) return "0 КБ"
 	if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`
 	return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
 }
@@ -164,6 +248,57 @@ async function restore(b) {
 				</div>
 			</div>
 
+			<div class="duo">
+				<Card v-if="st" pad="md" stack>
+					<div class="spread">
+						<b class="contrast"><Icon name="database" /> Место на диске</b>
+						<Button size="sm" icon="trash" :disabled="!freeable" :loading="cleaning" @click="cleanNow">
+							{{ freeable ? "Освободить " + size(freeable) : "Лишнего нет" }}
+						</Button>
+					</div>
+					<div class="disk">
+						<div><span>Фото и планы</span><b>{{ size(st.uploads.size) }}</b><small>{{ st.uploads.count }} файлов</small></div>
+						<div><span>База</span><b>{{ size(st.db_size) }}</b></div>
+						<div><span>Резервные копии</span><b>{{ size(st.backups_size) }}</b></div>
+					</div>
+					<p class="muted small">
+						Каждую ночь сами удаляются: файлы, на которые ничто не ссылается; фото заявок, починенных
+						{{ st.keep_days ? "больше " + st.keep_days + " дней назад" : "— выключено (PHOTO_KEEP_DAYS=0)" }}; старые снимки перед восстановлением.
+						<template v-if="st.last"> Последняя уборка {{ when(st.last.at) }}: освобождено {{ size(st.last.freed) }}.</template>
+					</p>
+				</Card>
+				<Card v-if="ver" pad="md" stack>
+					<div class="spread">
+						<b class="contrast"><Icon name="rotate-cw" /> Версия и обновления</b>
+						<Button size="sm" icon="rotate-cw" :loading="checking" @click="checkNow">{{ checking ? "Проверяем…" : "Проверить сейчас" }}</Button>
+					</div>
+					<div class="disk">
+						<div><span>Сейчас работает</span><b class="mono">{{ ver.version }}</b><small v-if="ver.built_at">собрана {{ when(ver.built_at) }}</small></div>
+						<div><span>Сервер проверял</span><b>{{ ver.checked_at ? ago(ver.checked_at) : "ещё нет" }}</b><small v-if="ver.checked_at">{{ when(ver.checked_at) }}</small></div>
+						<div v-if="ver.update">
+							<span>Последнее обновление</span>
+							<b :style="{ color: UPD[ver.update.result]?.[1] }">{{ UPD[ver.update.result]?.[0] || ver.update.result }}</b>
+							<small>{{ when(ver.update.at) }}</small>
+						</div>
+					</div>
+					<p v-if="ver.update?.message && ver.update.result !== 'ok'" class="small upd-msg">{{ ver.update.message }}</p>
+					<div v-if="ver.update?.changes?.length" class="changes">
+						<div class="changes__title">{{ ver.update.result === "ok" ? "Что нового в " + ver.update.to : "Было в " + ver.update.to + " — не установлено" }}</div>
+						<ul>
+							<li v-for="c in showAllChanges ? ver.update.changes : ver.update.changes.slice(0, 5)" :key="c">{{ c }}</li>
+						</ul>
+						<button v-if="ver.update.changes.length > 5" type="button" class="linkbtn" @click="showAllChanges = !showAllChanges">
+							{{ showAllChanges ? "свернуть" : "ещё " + (ver.update.changes.length - 5) }}
+						</button>
+					</div>
+					<p class="muted small">
+						{{ ver.checked_at || ver.update
+							? "Сервер сам проверяет репозиторий каждые 15 минут. Перед обновлением снимает резервную копию, а если новая версия не запустится — возвращает прежнюю."
+							: "Автообновление ещё не установлено. На сервере один раз: sudo bash scripts/update.sh --install" }}
+					</p>
+				</Card>
+			</div>
+
 			<Card pad="md" class="safety">
 				<Icon name="shield-check" size="1.4rem" />
 				<ul>
@@ -261,6 +396,82 @@ async function restore(b) {
 .mono {
 	font-family: var(--font-mono, ui-monospace, monospace);
 	font-size: var(--font-size-xs);
+}
+.duo {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--gap-md);
+}
+.duo :deep(svg) {
+	vertical-align: -3px;
+	margin-right: 4px;
+	color: var(--color-brand);
+}
+.disk {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+	gap: var(--gap-sm);
+}
+.disk > div {
+	display: grid;
+	padding: var(--gap-sm) var(--gap-md);
+	border-radius: var(--radius-md);
+	background: var(--color-bg);
+	border: 1px solid var(--color-divider);
+}
+.disk span,
+.disk small {
+	font-size: var(--font-size-xs);
+	color: var(--color-secondary);
+}
+.disk b {
+	font-size: var(--font-size-lg);
+	color: var(--color-contrast);
+}
+.upd-msg {
+	padding: var(--gap-sm) var(--gap-md);
+	border-radius: var(--radius-md);
+	background: var(--color-orange-bg);
+	color: var(--color-orange);
+}
+.changes {
+	padding: var(--gap-sm) var(--gap-md);
+	border-radius: var(--radius-md);
+	background: var(--color-bg);
+	border: 1px solid var(--color-divider);
+	font-size: var(--font-size-sm);
+}
+.changes__title {
+	font-size: var(--font-size-xs);
+	font-weight: var(--font-weight-bold);
+	color: var(--color-secondary);
+}
+.changes ul {
+	margin: 4px 0 0;
+	padding-left: 1.1em;
+	display: grid;
+	gap: 2px;
+}
+.linkbtn {
+	padding: 0;
+	margin-top: 4px;
+	border: none;
+	background: none;
+	color: var(--color-brand);
+	font: inherit;
+	font-size: var(--font-size-xs);
+	font-weight: var(--font-weight-bold);
+	cursor: pointer;
+}
+.small {
+	margin: 0;
+	font-size: var(--font-size-xs);
+	line-height: 1.5;
+}
+@media (max-width: 900px) {
+	.duo {
+		grid-template-columns: minmax(0, 1fr);
+	}
 }
 .safety {
 	display: flex;

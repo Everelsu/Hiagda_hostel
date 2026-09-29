@@ -415,6 +415,8 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 	auth       TEXT NOT NULL,
 	created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
 );
+-- Когда заявку починили: от этой даты считается срок хранения её фото
+ALTER TABLE room_issues ADD COLUMN IF NOT EXISTS closed_at TEXT;
 -- Фото в переписке по заявке
 ALTER TABLE issue_comments ADD COLUMN IF NOT EXISTS photo TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_statuses_stage ON statuses(stage) WHERE stage IS NOT NULL;

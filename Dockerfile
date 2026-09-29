@@ -13,6 +13,10 @@ FROM node:22-alpine
 RUN apk add --no-cache postgresql17-client tar
 WORKDIR /app
 ENV NODE_ENV=production
+# Версия (git describe) и время сборки — их показывает админка и проверяет scripts/update.sh
+ARG APP_VERSION=dev
+ARG APP_BUILT_AT=
+ENV APP_VERSION=$APP_VERSION APP_BUILT_AT=$APP_BUILT_AT
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY server ./server

@@ -39,6 +39,11 @@ test.before(async () => {
 	process.env.DATABASE_URL = url
 	process.env.PORT = "0" // эфемерный порт, чтобы не конфликтовать с рабочим сервером
 	process.env.JWT_SECRET = "test-secret"
+	// Файлы и копии — во временных каталогах: тесты гоняются и в контейнере, где data/ и backups/
+	// смонтированы с диска, а уборка сочла бы настоящие фото «сиротами» тестовой базы
+	const tmp = require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "hiagda-test-"))
+	process.env.UPLOADS_DIR = require("node:path").join(tmp, "uploads")
+	process.env.BACKUP_DIR = require("node:path").join(tmp, "backups")
 
 	// Чистая схема на каждый прогон: тесты начинают с пустой базы (первый из них
 	// создаёт администратора, а это возможно только пока пользователей нет).
@@ -728,4 +733,56 @@ test("заявка: фото в переписке, закрытая — тол�
 	assert.equal((await call("DELETE", `/issues/${id}`, { token: me })).status, 403, "вахтовик удалить не может")
 	assert.equal((await call("DELETE", `/issues/${id}`, { token: adminToken })).status, 200)
 	assert.ok(!(await call("GET", "/me/issues", { token: me })).json.some((i) => i.id === id))
+})
+
+test("уборка: сироты и фото давно закрытых заявок удаляются, нужное и свежее — нет", async () => {
+	const fs = require("node:fs")
+	const path = require("node:path")
+	const db = require("../server/db")
+	const storage = require("../server/storage")
+	const dir = process.env.UPLOADS_DIR
+	fs.mkdirSync(dir, { recursive: true })
+	const old = (Date.now() - 3 * 864e5) / 1000
+	const put = (name, aged) => {
+		fs.writeFileSync(path.join(dir, name), "x".repeat(1000))
+		if (aged) fs.utimesSync(path.join(dir, name), old, old)
+	}
+	put("t-orphan.jpg", true) // старый и ни на что не нужен
+	put("t-fresh.jpg", false) // только что загружен, форма ещё не сохранена
+	put("t-used.jpg", true) // стоит у заявки
+	put("t-closed.jpg", true) // фото давно починенной заявки
+	put("t-chat.jpg", true) // фото в её переписке
+
+	const acc = await call("POST", `/residents/${residentId}/account`, { token: adminToken })
+	const me = (await call("POST", "/login", { body: { username: acc.json.username, password: acc.json.password } })).json.token
+	const room = (await call("GET", "/me/overview", { token: me })).json.room.id
+	await call("POST", "/me/issues", { token: me, body: { room_id: room, amenity_name: "Окно", comment: "дует", photo: "/uploads/t-used.jpg" } })
+	const closed = (await call("POST", "/me/issues", { token: me, body: { room_id: room, amenity_name: "Дверь", comment: "скрипит", photo: "/uploads/t-closed.jpg" } })).json.id
+	await call("POST", `/issues/${closed}/comments`, { token: me, body: { photo: "/uploads/t-chat.jpg" } })
+	await call("PUT", `/issues/${closed}/status`, { token: adminToken, body: { status: "Починено" } })
+	// будто починили два года назад
+	await db.prepare("UPDATE room_issues SET closed_at = '2024-01-01 00:00:00' WHERE id = ?").run(closed)
+	await db.prepare("UPDATE issue_comments SET created_at = '2024-01-01 00:00:00' WHERE issue_id = ?").run(closed)
+
+	const plan = await storage.plan()
+	assert.ok(plan.orphans.count >= 1 && plan.old_photos.issues === 1)
+	const r = await storage.cleanup()
+	assert.ok(r.files >= 3)
+	const exists = (n) => fs.existsSync(path.join(dir, n))
+	assert.ok(!exists("t-orphan.jpg"), "сирота удалена")
+	assert.ok(exists("t-fresh.jpg"), "свежую загрузку не трогаем")
+	assert.ok(exists("t-used.jpg"), "фото открытой заявки на месте")
+	assert.ok(!exists("t-closed.jpg") && !exists("t-chat.jpg"), "фото давно закрытой заявки удалены")
+	const msgs = (await call("GET", `/issues/${closed}/comments`, { token: adminToken })).json
+	assert.match(msgs.at(-1).text, /Фото удалено/)
+	assert.equal(msgs.at(-1).photo, null)
+	fs.rmSync(path.join(dir, "t-fresh.jpg"), { force: true })
+	fs.rmSync(path.join(dir, "t-used.jpg"), { force: true })
+})
+
+test("/api/health отвечает без входа и сообщает версию", async () => {
+	const r = await call("GET", "/health")
+	assert.equal(r.status, 200)
+	assert.equal(r.json.ok, true)
+	assert.ok(r.json.version)
 })

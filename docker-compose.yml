@@ -16,7 +16,13 @@ services:
       retries: 20
 
   app:
-    build: .
+    # Имя образа фиксированное: scripts/update.sh держит прошлую версию как hiagda-app:previous для отката
+    image: ${APP_IMAGE:-hiagda-app}:latest
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+        APP_BUILT_AT: ${APP_BUILT_AT:-}
     restart: unless-stopped
     depends_on:
       db:
